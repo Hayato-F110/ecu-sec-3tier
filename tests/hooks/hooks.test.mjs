@@ -166,6 +166,18 @@ describe("guard-done-evidence", () => {
     assert.equal(doneDecision({ issueIdOrKey: "SC3-8", transitionId: "21" }, []), null);
     assert.equal(doneDecision(done("OTHER-1"), []), null);
   });
+  test("/code-review の指摘の直し", () => {
+    // 指摘 1：番号の ID で指定したら、別の課題の表で通さずに止める
+    const byId = comment("10050", TABLE);
+    assert.match(doneDecision({ issueIdOrKey: "10023", transitionId: "31" }, byId), /課題キー/);
+    // 指摘 2：見出しだけの表は数えない
+    assert.notEqual(doneDecision(done("SC3-8"), comment("SC3-8", "| 完了条件 | 証拠 |\n| --- | --- |")), null);
+    // 指摘 3：「完了」「done」を含む遷移の名前も見る
+    assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Review->Done" }, []), null);
+    // 指摘 4：条件の文の中の「未達」では止めない。結果の列の「未達」では止める
+    const wording = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| 未達の行がないこと | PR #5 | 達成 |";
+    assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", wording)), null);
+  });
   test("名前での完了の指定と、URL の課題キーを読む", () => {
     assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Done" }, []), null);
     assert.equal(keyOf("https://example.atlassian.net/browse/SC3-12"), "SC3-12");

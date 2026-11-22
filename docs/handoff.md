@@ -5,7 +5,7 @@
 ## いまの状態
 
 - Day 1（SC3-2）を作業中。Claude 側の準備（Git、CLAUDE.md、Hook・スキル・サブエージェント、docs、docker compose の DB）はできた
-- GitHub：https://github.com/Hayato-F110/ecu-sec-3tier （公開。2026-11-22 にオーナーが決めた。コミットの作者のメールは、このリポジトリの設定で GitHub の非公開用のメール）
+- GitHub：オーナーのアカウントの `ecu-sec-3tier`（公開。2026-11-22 にオーナーが決めた。コミットの作者のメールは、このリポジトリの設定で GitHub の非公開用のメール）
 - Jira：プロジェクト「ECUセキュリティ対策管理」（キー SC3）。エピック6件（SC3-1・3〜7）、ストーリー18件（Day 1〜18 ＝ SC3-2・8〜24。ポイント各5、開始日・期限は 11/22〜12/9 の毎日）
 - 作業中のブランチ：`feature/SC3-2-jira-done-evidence`（Jira の欄 ID のそろえと、新しい Hook `guard-done-evidence`）
 - オーナーが `.env` を作った（Claude は中身を読まない）

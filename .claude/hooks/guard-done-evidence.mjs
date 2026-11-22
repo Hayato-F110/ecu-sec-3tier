@@ -25,9 +25,12 @@ export const keyOf = (value) => {
   return m ? m[1].toUpperCase() : null;
 };
 
-/** 「完了」へ移す遷移か（ID は project.json の doneTransitionIds、名前は「完了」か Done） */
+/**
+ * 「完了」へ移す遷移か。ID は project.json の doneTransitionIds。名前は遷移そのものの名前で、行き先の状態の名前と
+ * 違うことがある（例：「Review->Done」）ので、「完了」か done を含めば完了とみなす（/code-review の指摘 3）
+ */
 export const isDoneTransition = (input) =>
-  DONE_IDS.has(String(input?.transitionId ?? "")) || /^\s*(完了|done)\s*$/i.test(String(input?.transitionName ?? ""));
+  DONE_IDS.has(String(input?.transitionId ?? "")) || /完了|done/i.test(String(input?.transitionName ?? ""));
 
 const cellsOf = (line) =>
   line
@@ -38,28 +41,48 @@ const cellsOf = (line) =>
     .map((c) => c.trim());
 
 /**
- * コメントの本文から、証拠の表（見出しに「完了条件」と「証拠」の列がある表）を探す。
- * 返す値：{ table: 表があるか, unmet: 「未達」を含む行の数 }
+ * コメントの本文から、証拠の表（見出しに「完了条件」と「証拠」の列があり、中身の行が1つ以上ある表）を探す。
+ * 「未達」は、見出しが「結果」か「判定」の列があればその列だけ、なければ「未達」だけのセルを数える
+ * （条件の文の中の「未達」という語で止めないため。/code-review の指摘 4）。
+ * 返す値：{ table: 表があるか, unmet: 未達の行の数 }
  */
 export const evidenceTableOf = (body) => {
   const lines = String(body ?? "").split(/\r?\n/);
   let table = false;
   let unmet = 0;
-  let inTable = false;
+  let header = null; // 今読んでいる証拠の表の見出し（表の外では null）
+  let rows = 0;
+  let unmetHere = 0;
+  const close = () => {
+    // 見出しだけで中身の行がない表は、表とみなさない（/code-review の指摘 2）
+    if (header !== null && rows > 0) {
+      table = true;
+      unmet += unmetHere;
+    }
+    header = null;
+  };
   for (const line of lines) {
     if (!line.trim().startsWith("|")) {
-      inTable = false;
+      close();
       continue;
     }
     const cells = cellsOf(line);
-    if (!inTable) {
-      inTable = cells.some((c) => c.includes("完了条件")) && cells.some((c) => c.includes("証拠"));
-      if (inTable) table = true;
+    if (header === null) {
+      if (cells.some((c) => c.includes("完了条件")) && cells.some((c) => c.includes("証拠"))) {
+        header = cells;
+        rows = 0;
+        unmetHere = 0;
+      }
       continue;
     }
     if (cells.every((c) => /^:?-+:?$/.test(c))) continue; // 表の区切りの行
-    if (cells.some((c) => c.includes("未達"))) unmet += 1;
+    rows += 1;
+    const resultCol = header.findIndex((c) => /結果|判定/.test(c));
+    const isUnmet =
+      resultCol >= 0 ? (cells[resultCol] ?? "").includes("未達") : cells.some((c) => c === "未達");
+    if (isUnmet) unmetHere += 1;
   }
+  close();
   return { table, unmet };
 };
 
@@ -86,15 +109,19 @@ export const commentsFor = (entries, key) => {
 export const doneDecision = (toolInput, entries) => {
   if (!isDoneTransition(toolInput)) return null;
   const key = keyOf(toolInput?.issueIdOrKey);
-  // よそのプロジェクトの課題は見ない（番号だけの ID は、このプロジェクトの課題かもしれないので見る）
-  if (key !== null && !key.startsWith(`${KEY}-`)) return null;
+  // 番号だけの ID は、どの課題か確かめられない（別の課題の表で通ってしまう）ので、キーで指定させる（/code-review の指摘 1）
+  if (key === null) {
+    return `課題を番号の ID（${toolInput?.issueIdOrKey}）で指定しています。証拠の表と突き合わせるため、課題キー（${KEY}-xx）で指定し直してください。`;
+  }
+  // よそのプロジェクトの課題は見ない
+  if (!key.startsWith(`${KEY}-`)) return null;
   const results = commentsFor(entries, key).map(evidenceTableOf);
   const last = results.filter((r) => r.table).at(-1);
   if (last === undefined) {
     return (
-      `${key ?? toolInput?.issueIdOrKey} に、完了条件ごとの証拠の表のコメントを、この会話の中でまだ書いていません。` +
-      "getJiraIssue で完了条件を読み直し、見出しに「完了条件」「証拠」の列がある表（証拠は PR・CI の実行・ファイル:行）を " +
-      "addOrEditJiraIssueComment で書いてから、もう一度「完了」に移してください。"
+      `${key} に、完了条件ごとの証拠の表のコメントを、この会話の中でまだ書いていません。` +
+      "getJiraIssue で完了条件を読み直し、見出しに「完了条件」「証拠」「結果」の列がある Markdown の表（証拠は PR・CI の実行・ファイル:行）を、" +
+      "課題キーを指定して addOrEditJiraIssueComment で書いてから、もう一度「完了」に移してください（HTML の表は読めません）。"
     );
   }
   if (last.unmet > 0) {
