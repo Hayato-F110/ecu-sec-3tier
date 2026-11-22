@@ -5,8 +5,6 @@
 
 # ---- 個人用 ----
 private/
-# 計画書の元（作者名を含む。中身は docs/spec.md・docs/schedule.md・docs/design-decisions.md に写してある）
-*.docx
 CLAUDE.local.md
 .claude/settings.local.json
 .claude/worktrees/
