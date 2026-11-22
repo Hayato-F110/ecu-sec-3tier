@@ -2,6 +2,8 @@
   "files.eol": "\n",
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
+  "python.terminal.activateEnvironment": false,
+  "python.terminal.useEnvFile": false,
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,

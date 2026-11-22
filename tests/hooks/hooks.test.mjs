@@ -218,10 +218,12 @@ describe("guard-done-evidence", () => {
 
 describe("review-before-pr：最後のレビューのあとの直しと、直しの証拠の表", () => {
   const CWD = "C:/w/repo";
-  const review = (id) => [
-    { cwd: CWD, message: { content: [{ type: "tool_use", id, name: "Skill", input: { skill: "code-review" } }] } },
-    { cwd: CWD, message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: "ok" }] } },
+  const review = (id, timestamp = "2026-11-22T10:00:00Z") => [
+    { cwd: CWD, timestamp, message: { content: [{ type: "tool_use", id, name: "Skill", input: { skill: "code-review" } }] } },
+    { cwd: CWD, timestamp, message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: "ok" }] } },
   ];
+  // このブランチの最初のコミットの時刻（これよりあとのレビューだけを、表での例外に数える）
+  const branchStart = "2026-11-22T09:00:00Z";
   const commit = { cwd: CWD, message: { content: [{ type: "tool_use", id: "c", name: "Bash", input: { command: 'git commit -m "x"' } }] } };
   const base = { command: "gh pr create --body-file tmp/pr-body.md", cwd: CWD, diffFiles: [".claude/hooks/x.mjs"] };
   const TABLE = [
@@ -237,23 +239,33 @@ describe("review-before-pr：最後のレビューのあとの直しと、直し
   });
   test("レビューのあとに直したら止める。直しの証拠の表があれば通す", () => {
     const entries = [...review("r1"), commit];
-    assert.equal(reviewDecision({ ...base, entries }).block, true);
-    assert.equal(reviewDecision({ ...base, entries, prBody: TABLE }).block, false);
+    assert.equal(reviewDecision({ ...base, entries, branchStart }).block, true);
+    assert.equal(reviewDecision({ ...base, entries, prBody: TABLE, branchStart }).block, false);
   });
   test("レビューを1回もしていなければ、表があっても止める", () => {
-    assert.equal(reviewDecision({ ...base, entries: [commit], prBody: TABLE }).block, true);
+    assert.equal(reviewDecision({ ...base, entries: [commit], prBody: TABLE, branchStart }).block, true);
+  });
+  test("前の PR のときのレビュー（ブランチの最初のコミットより前）は数えない", () => {
+    const entries = [...review("old", "2026-11-22T08:00:00Z"), commit];
+    assert.equal(reviewDecision({ ...base, entries, prBody: TABLE, branchStart }).block, true);
+    // ブランチの始まりが分からないときは、表での例外を使わない
+    assert.equal(reviewDecision({ ...base, entries: [...review("r1"), commit], prBody: TABLE }).block, true);
   });
   test("表の見分け：見出しだけ・列が違う・中身の行がないものは表とみなさない", () => {
     assert.equal(hasFixEvidenceTable(TABLE), true);
     assert.equal(hasFixEvidenceTable("## 直しの証拠の表\n\nなし"), false);
     assert.equal(hasFixEvidenceTable("## 直しの証拠の表\n\n| 項目 | 結果 |\n| --- | --- |\n| a | b |"), false);
     assert.equal(hasFixEvidenceTable(TABLE.split("\n").slice(0, 4).join("\n")), false);
+    // コードブロックの中の見本の表は数えない
+    assert.equal(hasFixEvidenceTable(["```markdown", TABLE, "```"].join("\n")), false);
   });
   test("PR の説明を --body-file と --body から読む", () => {
-    // Windows はファイル名の大文字と小文字を区別しないので、小文字にそろえて比べる
+    // 場所は大文字と小文字をそのまま使う（大文字と小文字を区別する OS でも読めるように）
+    assert.equal(prBodyOf("gh pr create --body-file tmp/b.md", CWD, (f) => `read:${f}`), "read:C:/w/repo/tmp/b.md");
+    // 前にある git commit -F（コミットの文のファイル）を、PR の説明と取り違えない
     assert.equal(
-      prBodyOf("gh pr create --body-file tmp/b.md", CWD, (f) => `read:${f}`).toLowerCase(),
-      "read:c:/w/repo/tmp/b.md",
+      prBodyOf("git commit -F tmp/msg.txt && gh pr create --body-file tmp/pr.md", CWD, (f) => `read:${f}`),
+      "read:C:/w/repo/tmp/pr.md",
     );
     assert.equal(prBodyOf('gh pr create --title t --body "本文"', CWD), "本文");
     assert.equal(prBodyOf("gh pr create --fill", CWD), "");
