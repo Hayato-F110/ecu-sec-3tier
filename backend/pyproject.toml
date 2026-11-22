@@ -1,0 +1,46 @@
+# API（処理の層）の Python プロジェクト。依存は uv で管理し、uv.lock をコミットする
+[project]
+name = "ecu-sec-backend"
+version = "0.1.0"
+description = "ECU セキュリティ対策状況の管理システムの API（練習用・ダミーデータ）"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic==1.20.1",
+    "psycopg[binary]==3.3.9",
+    "pydantic-settings==2.16.3",
+    "sqlalchemy==2.1.9",
+]
+
+[tool.uv]
+# 配布用のパッケージにはしない（app/ をそのまま動かすアプリ）
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# app/ を import できるようにする
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+# E・F：基本の誤り、I：import の並び、B：よくある不具合、UP：古い書き方、S：セキュリティ
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.isort]
+# backend/alembic/ フォルダ（変更履歴）と、外部の部品の alembic を取り違えないように
+known-third-party = ["alembic"]
+known-first-party = ["app", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# テストでは assert を使う（S101）。テスト用の固定の値は秘密情報ではない（S105・S106）
+"tests/**" = ["S101", "S105", "S106"]
+# Alembic が自動で作る変更履歴は、CHECK 制約の SQL が1行の長い文字列になる
+"alembic/versions/**" = ["E501"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.6",
+]
