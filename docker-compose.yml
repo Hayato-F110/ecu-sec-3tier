@@ -1,0 +1,30 @@
+# ローカルの3層（画面・API・DB）を1コマンドで起動する（完了条件1）。
+# Day 1 は DB（保存の層）だけ。API（backend）は Day 3、画面（frontend ＋ nginx）は Day 4 に足す。
+# 使い方：env.example を .env に写して値を変え、docker compose up -d
+name: ecu-sec
+
+services:
+  db:
+    # PostgreSQL 18。最新は 19.0（2026-11-19 公開）だが、Phase 3 で RDS に載せるため、RDS が対応している版にそろえる
+    # （Day 12 に RDS の対応版を公式で確かめ、必要なら上げる）。版の一覧：https://www.postgresql.org/support/versioning/
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?.env に POSTGRES_DB を書く}
+      POSTGRES_USER: ${POSTGRES_USER:?.env に POSTGRES_USER を書く}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env に POSTGRES_PASSWORD を書く}
+    ports:
+      # 手元の PC からだけ接続できるように 127.0.0.1 に限る（0.0.0.0 だと同じネットワークの機械からも届く）
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # データは名前付きボリュームに置く（docker compose down では消えない。down -v で消える）
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      # 接続を受け付けられるかを確かめる（API は Day 3 から、これが通るまで待って起動する）
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:

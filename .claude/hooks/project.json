@@ -1,0 +1,10 @@
+{
+  "説明": "Hook が読むこのプロジェクトの設定。Jira のプロジェクトを作ったら、jiraKey と欄の ID を実際の値にそろえる（getJiraIssue の fields で確かめる）",
+  "jiraKey": "SC3",
+  "jiraFields": {
+    "storyPoints": "customfield_10034",
+    "startDate": "customfield_10015",
+    "sprint": "customfield_10020",
+    "wrongStoryPoints": "customfield_10016"
+  }
+}

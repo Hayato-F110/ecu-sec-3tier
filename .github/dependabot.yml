@@ -1,0 +1,46 @@
+# Dependabot に、依存の新しい版を見張らせ、更新の PR を作らせる。
+# 書き方：https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+# 各層を作った日に、そのフォルダ（backend・frontend・infra）がそろってから有効になる（ないフォルダは Dependabot が知らせるだけ）。
+version: 2 # 設定ファイルの書式の版（常に 2）
+updates:
+  - package-ecosystem: "uv" # backend の pyproject.toml と uv.lock
+    directory: "/backend"
+    schedule: &weekly
+      interval: "weekly" # 週に1回だけ見る（PR が増えすぎないように）
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo" # 日本時間で（既定は UTC）
+    groups:
+      python-minor-patch: # minor・patch の更新は1つの PR にまとめる（major は1つずつ）
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "SC3-TBD" # コミットと PR の題の先頭に課題キーを付ける（CLAUDE.md の決まり。依存の更新の課題を作ったら直す）
+
+  - package-ecosystem: "npm" # frontend の package.json と package-lock.json
+    directory: "/frontend"
+    schedule: *weekly
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "SC3-TBD"
+
+  - package-ecosystem: "docker" # Dockerfile と docker compose のイメージ
+    directory: "/"
+    schedule: *weekly
+    commit-message:
+      prefix: "SC3-TBD"
+
+  - package-ecosystem: "terraform" # Terraform のプロバイダ（infra/classic）
+    directory: "/infra/classic"
+    schedule: *weekly
+    commit-message:
+      prefix: "SC3-TBD"
+
+  - package-ecosystem: "github-actions" # .github/workflows の uses: で使うアクション
+    directory: "/"
+    schedule: *weekly
+    commit-message:
+      prefix: "SC3-TBD"

@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "language": "japanese",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write|MultiEdit|Grep|Glob|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/protect-secrets.mjs"],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-aws-cost.mjs"],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-inline-backslash.mjs"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-long-foreground.mjs"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-delete.mjs"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-no-verify.mjs"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/review-before-pr.mjs"],
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__(createJiraIssue|editJiraIssue|executeWrite|transitionJiraIssue)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-jira-fields.mjs"],
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/japanese-reply.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/format-and-lint.mjs"],
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "SubagentHandback",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/save-agent-report.mjs"],
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/japanese-reminder.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/japanese-reminder.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/save-agent-report.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/japanese-reply.mjs"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/plain-terms.mjs"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/wait-needs-next.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*.tfstate)",
+      "Read(**/*.tfstate.backup)",
+      "Read(**/*.tfvars)",
+      "Read(~/.aws/**)",
+      "Read(~/.ssh/**)",
+      "Read(secrets/**)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push*--force*)",
+      "Bash(git push* -f*)",
+      "Bash(git push*origin main)",
+      "Bash(git push*origin main *)",
+      "Bash(git push*:main*)",
+      "Bash(git push*origin HEAD)",
+      "Bash(gh repo edit*--visibility*)",
+      "Bash(gh repo delete*)",
+      "Bash(aws iam create-access-key*)",
+      "Bash(aws iam create-user*)",
+      "Bash(aws iam attach-user-policy*)",
+      "Bash(aws iam put-user-policy*)",
+      "Bash(aws organizations*)",
+      "Bash(aws account*)",
+      "Bash(aws freetier*)",
+      "Bash(terraform state rm*)",
+      "Bash(terraform force-unlock*)",
+      "Bash(reg add*)",
+      "Bash(reg delete*)",
+      "Bash(setx*)",
+      "PowerShell(git push --force*)",
+      "PowerShell(git push -f*)",
+      "PowerShell(git push*--force*)",
+      "PowerShell(git push* -f*)",
+      "PowerShell(git push*origin main)",
+      "PowerShell(git push*origin main *)",
+      "PowerShell(git push*:main*)",
+      "PowerShell(git push*origin HEAD)",
+      "PowerShell(gh repo edit*--visibility*)",
+      "PowerShell(gh repo delete*)",
+      "PowerShell(aws iam create-access-key*)",
+      "PowerShell(aws iam create-user*)",
+      "PowerShell(aws iam attach-user-policy*)",
+      "PowerShell(aws iam put-user-policy*)",
+      "PowerShell(aws organizations*)",
+      "PowerShell(aws account*)",
+      "PowerShell(terraform state rm*)",
+      "PowerShell(terraform force-unlock*)",
+      "PowerShell(Set-ExecutionPolicy*)",
+      "PowerShell(Set-ItemProperty*HKLM*)",
+      "PowerShell(New-ItemProperty*HKLM*)",
+      "PowerShell(reg add*)",
+      "PowerShell(reg delete*)",
+      "PowerShell(setx*)",
+      "mcp__claude_ai_Atlassian_MCP__executeDestructive"
+    ],
+    "ask": [
+      "Bash(terraform apply*)",
+      "Bash(terraform destroy*)",
+      "Bash(terraform -chdir=* apply*)",
+      "Bash(terraform -chdir=* destroy*)",
+      "Bash(terraform import*)",
+      "Bash(aws * delete*)",
+      "Bash(aws * terminate*)",
+      "Bash(aws * create*)",
+      "Bash(aws * run-instances*)",
+      "Bash(aws * put*)",
+      "Bash(aws * modify*)",
+      "Bash(aws * update*)",
+      "Bash(aws s3 rm*)",
+      "Bash(aws s3 rb*)",
+      "Bash(aws s3 sync*)",
+      "Bash(aws s3 cp*)",
+      "Bash(docker compose down*-v*)",
+      "Bash(docker volume rm*)",
+      "Bash(docker volume prune*)",
+      "Bash(docker system prune*)",
+      "Bash(alembic downgrade*)",
+      "Bash(uv run alembic downgrade*)",
+      "Bash(rm -rf*)",
+      "Bash(rm -r *)",
+      "Bash(rm -fr*)",
+      "Bash(rm *)",
+      "Bash(rm -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean*)",
+      "Bash(git branch -D*)",
+      "Bash(git push origin --delete*)",
+      "Bash(git push origin :*)",
+      "Bash(git rebase*)",
+      "Bash(git filter-branch*)",
+      "Bash(gh release delete*)",
+      "Bash(gh repo create*)",
+      "Bash(winget install*)",
+      "PowerShell(terraform apply*)",
+      "PowerShell(terraform destroy*)",
+      "PowerShell(terraform -chdir=* apply*)",
+      "PowerShell(terraform -chdir=* destroy*)",
+      "PowerShell(terraform import*)",
+      "PowerShell(aws * delete*)",
+      "PowerShell(aws * terminate*)",
+      "PowerShell(aws * create*)",
+      "PowerShell(aws * run-instances*)",
+      "PowerShell(aws * put*)",
+      "PowerShell(aws * modify*)",
+      "PowerShell(aws * update*)",
+      "PowerShell(aws s3 rm*)",
+      "PowerShell(aws s3 rb*)",
+      "PowerShell(aws s3 sync*)",
+      "PowerShell(aws s3 cp*)",
+      "PowerShell(docker compose down*-v*)",
+      "PowerShell(docker volume rm*)",
+      "PowerShell(docker volume prune*)",
+      "PowerShell(docker system prune*)",
+      "PowerShell(alembic downgrade*)",
+      "PowerShell(uv run alembic downgrade*)",
+      "PowerShell(Remove-Item*)",
+      "PowerShell(rm *)",
+      "PowerShell(git reset --hard*)",
+      "PowerShell(git clean*)",
+      "PowerShell(git branch -D*)",
+      "PowerShell(git push origin --delete*)",
+      "PowerShell(git rebase*)",
+      "PowerShell(gh repo create*)",
+      "PowerShell(winget install*)"
+    ],
+    "allow": [
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(node --test*)",
+      "Bash(uv run pytest*)",
+      "Bash(uv run ruff*)",
+      "Bash(uv run mypy*)",
+      "Bash(docker compose ps*)",
+      "Bash(docker compose logs*)",
+      "Bash(terraform fmt*)",
+      "Bash(terraform validate*)",
+      "Bash(terraform plan*)",
+      "Bash(aws sts get-caller-identity*)",
+      "Bash(npm run *)",
+      "Bash(npm test*)",
+      "PowerShell(git status*)",
+      "PowerShell(git diff*)",
+      "PowerShell(git log*)",
+      "PowerShell(node --test*)",
+      "PowerShell(uv run pytest*)",
+      "PowerShell(uv run ruff*)",
+      "PowerShell(docker compose ps*)",
+      "PowerShell(docker compose logs*)",
+      "PowerShell(terraform fmt*)",
+      "PowerShell(terraform validate*)",
+      "PowerShell(aws sts get-caller-identity*)",
+      "PowerShell(npm run *)",
+      "PowerShell(npm test*)"
+    ]
+  }
+}

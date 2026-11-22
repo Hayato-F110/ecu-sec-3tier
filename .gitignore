@@ -1,0 +1,90 @@
+# ============================================================
+# ECU セキュリティ対策状況の管理システム（3層の練習） .gitignore
+# 方針：秘密情報・Terraform の状態・会社の情報は「絶対に」入れない
+# ============================================================
+
+# ---- 個人用 ----
+private/
+# 計画書の元（作者名を含む。中身は docs/spec.md・docs/schedule.md・docs/design-decisions.md に写してある）
+*.docx
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/worktrees/
+# サブエージェントの報告の自動保存（Hook save-agent-report。作業の記録で、共有しない）
+.claude/agent-reports/
+
+# ---- 秘密情報（最重要） ----
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+secrets/
+credentials
+credentials.json
+*token*.txt
+
+# ---- Terraform（状態のファイルには RDS のパスワードなどが平文で入る） ----
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# ---- Node（画面） ----
+node_modules/
+dist/
+.vite/
+coverage/
+npm-debug.log*
+.eslintcache
+
+# ---- 画面の写し・E2E の結果 ----
+screenshots/
+test-results/
+playwright-report/
+Screenshot_*
+スクリーンショット*
+
+# ---- OS / エディタ ----
+Thumbs.db
+desktop.ini
+.DS_Store
+~$*
+.~lock.*
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# ---- 一時ファイル（プロジェクトの外にフォルダを作らない。作業用の一時ファイルはここ） ----
+tmp/
+
+# ---- その他 ----
+*.log
+*.tmp
+*.bak
