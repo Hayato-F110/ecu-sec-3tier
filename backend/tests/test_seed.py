@@ -155,31 +155,63 @@ def test_every_state_change_has_audit_log(seeded: Connection) -> None:
         SELECT count(*) FROM assessments a, LATERAL (VALUES
             ('submit', a.submitted_by, a.submitted_at),
             ('approve', a.approved_by, a.approved_at),
-            ('review', a.reviewed_by, a.reviewed_at)
+            (CASE a.review_status WHEN 'confirmed' THEN 'confirm'
+                                  WHEN 'change_requested' THEN 'request_change' END,
+             a.reviewed_by, a.reviewed_at)
           ) AS e(action, who, at)
         WHERE e.who IS NOT NULL AND e.at IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM audit_logs l
             WHERE l.target = 'assessment:' || a.id AND l.user_id = e.who
-              AND l.created_at = e.at)""",
+              AND l.created_at = e.at AND l.action = e.action)""",
     )
     assert missing == 0
 
 
+def test_comment_audit_logs_name_the_kind(seeded: Connection) -> None:
+    wrong = scalar(
+        seeded,
+        """
+        SELECT count(*) FROM comments m JOIN audit_logs l ON l.target = 'comment:' || m.id
+        WHERE l.action <> 'comment_' || m.kind OR l.created_at <> m.created_at""",
+    )
+    assert wrong == 0
+
+
 def test_audit_logs_follow_event_order(seeded: Connection) -> None:
-    """同じ版の監査ログは、申請 → 承認 → 確認の順の日時になっている。"""
+    """出来事の日時が、申請 → 承認 → コメント → 確認 → 次の版の申請の順になっている
+    （テストの一覧 #21）。監査ログの日時は出来事の日時と同じ（上のテストで確かめる）。"""
     wrong = scalar(
         seeded,
         """
         SELECT count(*) FROM assessments a
         WHERE a.submitted_at >= a.approved_at
            OR a.approved_at >= a.reviewed_at
+           -- コメントは承認のあと、確認の前
            OR EXISTS (
              SELECT 1 FROM comments m
-             WHERE m.assessment_id = a.id AND m.kind <> 'answer'
-               AND m.created_at < a.approved_at)""",
+             WHERE m.assessment_id = a.id
+               AND (m.created_at <= a.approved_at OR m.created_at >= a.reviewed_at))
+           -- 回答は質問のあと
+           OR EXISTS (
+             SELECT 1 FROM comments ans JOIN comments q ON q.id = ans.parent_id
+             WHERE ans.assessment_id = a.id AND ans.created_at <= q.created_at)
+           -- 次の版の申請は、前の版の確認のあと
+           OR EXISTS (
+             SELECT 1 FROM assessments nxt
+             WHERE nxt.ecu_id = a.ecu_id AND nxt.version = a.version + 1
+               AND nxt.submitted_at <= a.reviewed_at)""",
     )
     assert wrong == 0
+
+
+def test_audit_requires_time() -> None:
+    """監査ログの日時を空にすると、NULL を入れる前に止まる。"""
+    from app.models import User
+    from app.seed import audit
+
+    with pytest.raises(ValueError, match="監査ログの日時が空"):
+        audit(Session(), User(id=1), "submit", "assessment:1", None)
 
 
 # ---- #19 他社のテストの材料 ----

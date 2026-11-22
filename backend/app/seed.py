@@ -292,6 +292,9 @@ def add_comment(
 
 
 def audit(session: Session, user: User, action: str, target: str, at: datetime | None) -> None:
+    # 日時が空だと created_at に NULL が入り、NOT NULL で失敗する。呼び出しの誤りとして止める
+    if at is None:
+        raise ValueError(f"監査ログの日時が空：{action} {target}")
     session.add(
         AuditLog(
             user_id=user.id,

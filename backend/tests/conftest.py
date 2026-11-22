@@ -31,7 +31,9 @@ def recreate_test_database(name: str) -> URL:
         raise ValueError(f"テスト用以外の DB は作り直さない：{name}")
     settings = get_settings()
     # DB の作成・削除はトランザクションの外で行う必要がある（AUTOCOMMIT）
-    admin = create_engine(settings.database_url(), isolation_level="AUTOCOMMIT")
+    # 管理用の DB（postgres）につないで作り直す。開発用の DB につなぐと、POSTGRES_DB が
+    # テスト用の名前のとき（CI など）に「つないでいる DB は消せない」で落ちる
+    admin = create_engine(settings.database_url("postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
         conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
         conn.execute(text(f'CREATE DATABASE "{name}"'))

@@ -1,8 +1,8 @@
 """create tables
 
-Revision ID: 40f89c06213c
+Revision ID: 3abdc64d9531
 Revises:
-Create Date: 2026-11-22 19:11:24.463312+09:00
+Create Date: 2026-11-22 19:46:16.950333+09:00
 
 """
 
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "40f89c06213c"
+revision: str = "3abdc64d9531"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -113,7 +113,7 @@ def upgrade() -> None:
             name=op.f("ck_assessments_review_status"),
         ),
         sa.CheckConstraint(
-            "status <> 'rejected' OR (reject_reason IS NOT NULL AND reject_reason ~ '[^[:space:]\xa0\u200b\u200c\u200d\u2060\ufeff\u3000]')",
+            "status <> 'rejected' OR (reject_reason IS NOT NULL AND reject_reason ~ '[^[:space:]\xa0\xad͏ᅟᅠ\u1680\u180e\u2000-\u200f\u2028-\u202f\u205f-\u206f⠀\u3000ㅤ︀-️\ufeffﾠ]')",
             name=op.f("ck_assessments_reject_reason"),
         ),
         sa.CheckConstraint(
@@ -241,7 +241,7 @@ def upgrade() -> None:
             "(kind = 'answer') = (parent_id IS NOT NULL)", name=op.f("ck_comments_parent")
         ),
         sa.CheckConstraint(
-            "body ~ '[^[:space:]\xa0\u200b\u200c\u200d\u2060\ufeff\u3000]'",
+            "body ~ '[^[:space:]\xa0\xad͏ᅟᅠ\u1680\u180e\u2000-\u200f\u2028-\u202f\u205f-\u206f⠀\u3000ㅤ︀-️\ufeffﾠ]'",
             name=op.f("ck_comments_body"),
         ),
         sa.CheckConstraint(

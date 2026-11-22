@@ -15,8 +15,23 @@ from sqlalchemy import Connection, text
 from sqlalchemy.exc import IntegrityError
 
 FULL_WIDTH_SPACE = "　"
-# 見えない空白：ノーブレークスペース、ゼロ幅スペース・非接合子・接合子、単語結合子、BOM
-INVISIBLE = [" ", "​", "‌", "‍", "⁠", "﻿"]
+# 見えない空白：ノーブレークスペース、ゼロ幅スペース・非接合子・接合子、単語結合子、BOM、
+# ハングルのフィラー、点字の空白、モンゴル語の母音区切り、ソフトハイフン、方向の印、EM スペース
+INVISIBLE = [
+    " ",
+    "​",
+    "‌",
+    "‍",
+    "⁠",
+    "﻿",
+    "ㅤ",
+    "⠀",
+    "᠎",
+    "­",
+    "‎",
+    "‏",
+    " ",
+]
 
 
 @dataclass
@@ -264,7 +279,10 @@ def put_value(conn: Connection, b: Base, target: str, value: str) -> None:
             if value in VALID_VALUES[target]:
                 add_version(conn, b, 1, value)
             else:
-                insert(conn, ASSESSMENT, **(version_row(b, 1, "draft") | {"status": value}))
+                # 申請済みの列がそろった行（pending）の状態だけを変える。draft の行を使うと
+                # 申請者の制約にも違反し、CHECK を調べる順番しだいで別の名前で落ちる
+                row = version_row(b, 1, "pending") | {"status": value}
+                insert(conn, ASSESSMENT, **row)
         case "assessments.review_status":
             reviewed = value in ("confirmed", "change_requested")
             add_version(
