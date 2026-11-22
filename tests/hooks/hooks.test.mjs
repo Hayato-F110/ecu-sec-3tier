@@ -5,7 +5,12 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { checkCli, checkTerraform } from "../../.claude/hooks/guard-aws-cost.mjs";
-import { doneDecision, evidenceTableOf, keyOf } from "../../.claude/hooks/guard-done-evidence.mjs";
+import {
+  asTransition,
+  doneDecision,
+  evidenceTableOf,
+  keyOf,
+} from "../../.claude/hooks/guard-done-evidence.mjs";
 import { findDestructive } from "../../.claude/hooks/guard-delete.mjs";
 import { findInlineBackslashRisk } from "../../.claude/hooks/guard-inline-backslash.mjs";
 import {
@@ -177,6 +182,27 @@ describe("guard-done-evidence", () => {
     // 指摘 4：条件の文の中の「未達」では止めない。結果の列の「未達」では止める
     const wording = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| 未達の行がないこと | PR #5 | 達成 |";
     assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", wording)), null);
+  });
+  test("2 回目の /code-review の指摘の直し", () => {
+    // 指摘 1・6：「未完了に戻す」「undone」は完了とみなさない。「完了にする」は完了とみなす
+    assert.equal(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "未完了に戻す" }, []), null);
+    assert.equal(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Mark undone" }, []), null);
+    assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "完了にする" }, []), null);
+    // 指摘 2：汎用の書き込みの遷移と、状態の欄の編集も見る
+    const viaExecute = asTransition("mcp__x__executeWrite", {
+      name: "transitionIssue",
+      inputs: { issueIdOrKey: "SC3-8", transition: { id: "31" } },
+    });
+    assert.notEqual(doneDecision(viaExecute, []), null);
+    const viaEdit = asTransition("mcp__x__editJiraIssue", { issueIdOrKey: "SC3-8", fields: { resolution: "完了" } });
+    assert.notEqual(doneDecision(viaEdit, []), null);
+    assert.equal(asTransition("mcp__x__editJiraIssue", { issueIdOrKey: "SC3-8", fields: { summary: "x" } }), null);
+    // 指摘 4：結果の列がないとき、「未達（理由）」も数える
+    const noResult = "| 完了条件 | 証拠 | 状態 |\n| --- | --- | --- |\n| CI が緑 | なし | 未達（Day 11 で作る） |";
+    assert.match(doneDecision(done("SC3-8"), comment("SC3-8", noResult)), /未達/);
+    // 指摘 5：「完了条件（期待する結果）」の列を結果の列と取り違えない
+    const tricky = "| 完了条件（期待する結果） | 証拠 | 結果 |\n| --- | --- | --- |\n| テストが通る | PR #3 | 未達 |";
+    assert.match(doneDecision(done("SC3-8"), comment("SC3-8", tricky)), /未達/);
   });
   test("名前での完了の指定と、URL の課題キーを読む", () => {
     assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Done" }, []), null);

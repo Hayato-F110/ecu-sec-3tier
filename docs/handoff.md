@@ -12,14 +12,13 @@
 
 ## オーナーにお願いすること
 
-1. Docker Desktop を起動する（2026-11-22 18:10 の時点で止まっていた）
-2. AWS：プランとクレジットの確認、Budgets（ゼロ支出予算）、練習用 IAM ユーザーと MFA、IAM ユーザーへの請求の画面の公開、CLI 用のアクセスキー
-3. AWS CLI と Terraform を入れて（`winget install --id Amazon.AWSCLI --exact`・`winget install --id Hashicorp.Terraform --exact`）、ご自身のターミナルで `aws configure`
-4. Jira で、スプリント1（Day 1〜3 ＝ SC3-2・8・9）を作って課題を入れる（スプリントの作成・割り当ては Claude からはしない決まり）
+1. AWS：プランとクレジットの確認、Budgets（ゼロ支出予算）、練習用 IAM ユーザーと MFA、IAM ユーザーへの請求の画面の公開、CLI 用のアクセスキー
+2. AWS CLI と Terraform を入れて（`winget install --id Amazon.AWSCLI --exact`・`winget install --id Hashicorp.Terraform --exact`）、ご自身のターミナルで `aws configure`
+3. Jira で、スプリント1（Day 1〜3 ＝ SC3-2・8・9）を作って課題を入れる（スプリントの作成・割り当ては Claude からはしない決まり）
 
 ## 次にやること
 
-1. Docker が起動したら `docker compose up -d` で PostgreSQL を起動し、`docker compose ps` で healthy を確かめる
+1. （済み）PostgreSQL 18.7 を `docker compose up -d` で起動し、healthy を確かめた（2026-11-22 18:30）
 2. `aws configure` が済んだら `aws sts get-caller-identity` を確かめる → SC3-2 の完了条件。証拠の表を SC3-2 のコメントに書いてから「完了」に
 3. Day 2（SC3-8）：テーブル設計と Alembic（`/story SC3-8` で Plan から）
 

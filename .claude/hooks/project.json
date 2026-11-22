@@ -1,5 +1,5 @@
 {
-  "説明": "Hook が読むこのプロジェクトの設定。欄の ID は 2026-11-22 に SC3-1 の編集できる欄（getJiraIssue の includeEditableFields）で確かめた。ポイントは Story point estimate（customfield_10016）。nori-adventure の customfield_10034 はこのプロジェクトにはない",
+  "説明": "Hook が読むこのプロジェクトの設定。欄の ID は 2026-11-22 に SC3-1 の編集できる欄（getJiraIssue の includeEditableFields）で確かめた。ポイントは Story point estimate（customfield_10016）。nori-adventure の customfield_10034 はこのプロジェクトにはない。遷移は 2026-11-22 に SC3-2 の listJiraIssueTransitions で確かめた：11 未着手・21 進行中・31 完了（完了の区分に入るのは 31 だけ）",
   "jiraKey": "SC3",
   "doneTransitionIds": ["31"],
   "jiraFields": {

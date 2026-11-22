@@ -29,8 +29,12 @@ export const keyOf = (value) => {
  * 「完了」へ移す遷移か。ID は project.json の doneTransitionIds。名前は遷移そのものの名前で、行き先の状態の名前と
  * 違うことがある（例：「Review->Done」）ので、「完了」か done を含めば完了とみなす（/code-review の指摘 3）
  */
+// 2 回目の /code-review（指摘 1・6）：SC3 の遷移は 11 未着手・21 進行中・31 完了だけ（project.json に確かめた記録）。
+// 名前は「完了」で終わるもの（「未完了に戻す」は除く）と、単語の done（undone・not done は除く）を見る
+const DONE_NAME = /(?<!未)完了(?!に戻)|(?<!un|not\s)\bdone\b/i;
 export const isDoneTransition = (input) =>
-  DONE_IDS.has(String(input?.transitionId ?? "")) || /完了|done/i.test(String(input?.transitionName ?? ""));
+  DONE_IDS.has(String(input?.transitionId ?? input?.transition?.id ?? "")) ||
+  DONE_NAME.test(String(input?.transitionName ?? input?.transition?.name ?? ""));
 
 const cellsOf = (line) =>
   line
@@ -77,9 +81,13 @@ export const evidenceTableOf = (body) => {
     }
     if (cells.every((c) => /^:?-+:?$/.test(c))) continue; // 表の区切りの行
     rows += 1;
-    const resultCol = header.findIndex((c) => /結果|判定/.test(c));
+    // 2 回目の /code-review（指摘 4・5）：結果の列は見出しが「結果」か「判定」ちょうどのものだけ。
+    // ないときは、完了条件の列を除くセルで「未達」を含むものを数える
+    const resultCol = header.findIndex((c) => c === "結果" || c === "判定");
     const isUnmet =
-      resultCol >= 0 ? (cells[resultCol] ?? "").includes("未達") : cells.some((c) => c === "未達");
+      resultCol >= 0
+        ? (cells[resultCol] ?? "").includes("未達")
+        : cells.some((c, i) => !(header[i] ?? "").includes("完了条件") && c.includes("未達"));
     if (isUnmet) unmetHere += 1;
   }
   close();
@@ -103,6 +111,32 @@ export const commentsFor = (entries, key) => {
     }
   }
   return bodies;
+};
+
+/**
+ * 道具の呼び出しを、遷移の形（issueIdOrKey・transitionId・transitionName）にそろえる。遷移でなければ null。
+ * 2 回目の /code-review（指摘 2）：transitionJiraIssue のほか、汎用の書き込み（executeWrite の遷移の操作）と、
+ * 課題の編集で状態（status）か解決（resolution）の欄を変えるものも、完了への移動とみなして見る
+ */
+export const asTransition = (toolName, toolInput) => {
+  const name = String(toolName ?? "");
+  const input = toolInput ?? {};
+  if (name.endsWith("transitionJiraIssue")) return input;
+  if (name.endsWith("executeWrite")) {
+    if (!/transition/i.test(String(input.name ?? ""))) return null;
+    const i = input.inputs ?? {};
+    return {
+      issueIdOrKey: i.issueIdOrKey ?? i.issueKey ?? i.issueId,
+      transitionId: i.transitionId ?? i.transition?.id,
+      transitionName: i.transitionName ?? i.transition?.name,
+    };
+  }
+  if (name.endsWith("editJiraIssue")) {
+    const fields = { ...(input.fields ?? {}), ...(input.additional_fields ?? {}) };
+    const touches = Object.keys(fields).some((k) => /^(status|resolution|状態|解決状況)$/i.test(k));
+    return touches ? { issueIdOrKey: input.issueIdOrKey, transitionName: "done" } : null;
+  }
+  return null;
 };
 
 /** 止める理由（文字列）か、止めないなら null */
@@ -141,7 +175,8 @@ const readStdin = async () => {
 
 const main = async () => {
   const input = JSON.parse((await readStdin()) || "{}");
-  if (!String(input.tool_name ?? "").endsWith("transitionJiraIssue")) return;
+  const transition = asTransition(input.tool_name, input.tool_input);
+  if (transition === null) return;
   let entries = [];
   if (typeof input.transcript_path === "string") {
     try {
@@ -158,7 +193,7 @@ const main = async () => {
       entries = [];
     }
   }
-  const reason = doneDecision(input.tool_input, entries);
+  const reason = doneDecision(transition, entries);
   if (reason === null) return;
   process.stderr.write(`止めました：${reason}（CLAUDE.md「課題を完了にする前に」）\n`);
   process.exit(BLOCK);
