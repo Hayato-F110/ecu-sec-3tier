@@ -1,10 +1,11 @@
 {
-  "説明": "Hook が読むこのプロジェクトの設定。Jira のプロジェクトを作ったら、jiraKey と欄の ID を実際の値にそろえる（getJiraIssue の fields で確かめる）",
+  "説明": "Hook が読むこのプロジェクトの設定。欄の ID は 2026-11-22 に SC3-1 の編集できる欄（getJiraIssue の includeEditableFields）で確かめた。ポイントは Story point estimate（customfield_10016）。nori-adventure の customfield_10034 はこのプロジェクトにはない",
   "jiraKey": "SC3",
+  "doneTransitionIds": ["31"],
   "jiraFields": {
-    "storyPoints": "customfield_10034",
+    "storyPoints": "customfield_10016",
     "startDate": "customfield_10015",
     "sprint": "customfield_10020",
-    "wrongStoryPoints": "customfield_10016"
+    "wrongStoryPoints": "customfield_10034"
   }
 }

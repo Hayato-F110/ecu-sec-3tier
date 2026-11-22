@@ -1,0 +1,146 @@
+// PreToolUse の Hook（transitionJiraIssue）：Jira の課題を「完了」に移す前に、この会話の中で、その課題に
+// 「完了条件ごとの証拠の表」をコメントで書いたかを確かめる。なければ止める（終了コード 2）。
+// 表の行に「未達」があるときも止める（未達が1つでもあれば完了にしない。CLAUDE.md「課題を完了にする前に」）。
+// 理由：nori-adventure の 2026-11-14、完了条件を読み直さずに課題を完了にし（NORI-71）、未達の1か所をほかの課題に
+//       移して閉じるよう勧めた（NORI-69）。文章の決まりでは止まらず、Hook（harvest-before-done）にした。
+//       このプロジェクトには、その Hook が読む「刈り取りの表」がないので、コメントの表を見る形で作り直した
+//       （2026-11-22 にオーナーが承認）。
+// 表とみなすもの：Markdown の表で、見出しの行に「完了条件」と「証拠」の列があるもの。
+// 限界：見るのはこの会話の記録だけ。前の会話で書いたコメントは数えないので、そのときはもう一度書く。
+//       表の中身が正しいか（証拠が本当にあるか）はオーナーが見る。
+
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const BLOCK = 2;
+const here = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT = JSON.parse(readFileSync(path.join(here, "project.json"), "utf8"));
+const KEY = String(PROJECT.jiraKey).toUpperCase();
+const DONE_IDS = new Set((PROJECT.doneTransitionIds ?? []).map(String));
+
+/** 課題キーを「SC3-12」の形にそろえる（URL の …/browse/SC3-12 も受ける）。読めなければ null */
+export const keyOf = (value) => {
+  const m = String(value ?? "").match(/([A-Za-z][A-Za-z0-9_]*-\d+)(?!.*[A-Za-z][A-Za-z0-9_]*-\d+)/);
+  return m ? m[1].toUpperCase() : null;
+};
+
+/** 「完了」へ移す遷移か（ID は project.json の doneTransitionIds、名前は「完了」か Done） */
+export const isDoneTransition = (input) =>
+  DONE_IDS.has(String(input?.transitionId ?? "")) || /^\s*(完了|done)\s*$/i.test(String(input?.transitionName ?? ""));
+
+const cellsOf = (line) =>
+  line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+
+/**
+ * コメントの本文から、証拠の表（見出しに「完了条件」と「証拠」の列がある表）を探す。
+ * 返す値：{ table: 表があるか, unmet: 「未達」を含む行の数 }
+ */
+export const evidenceTableOf = (body) => {
+  const lines = String(body ?? "").split(/\r?\n/);
+  let table = false;
+  let unmet = 0;
+  let inTable = false;
+  for (const line of lines) {
+    if (!line.trim().startsWith("|")) {
+      inTable = false;
+      continue;
+    }
+    const cells = cellsOf(line);
+    if (!inTable) {
+      inTable = cells.some((c) => c.includes("完了条件")) && cells.some((c) => c.includes("証拠"));
+      if (inTable) table = true;
+      continue;
+    }
+    if (cells.every((c) => /^:?-+:?$/.test(c))) continue; // 表の区切りの行
+    if (cells.some((c) => c.includes("未達"))) unmet += 1;
+  }
+  return { table, unmet };
+};
+
+/** 会話の記録（JSONL を読んだもの）から、その課題に書いた、成功したコメントの本文を集める */
+export const commentsFor = (entries, key) => {
+  const failed = new Set();
+  for (const e of entries) {
+    for (const c of Array.isArray(e?.message?.content) ? e.message.content : []) {
+      if (c?.type === "tool_result" && c.is_error === true) failed.add(c.tool_use_id);
+    }
+  }
+  const bodies = [];
+  for (const e of entries) {
+    for (const c of Array.isArray(e?.message?.content) ? e.message.content : []) {
+      if (c?.type !== "tool_use" || !String(c.name ?? "").endsWith("addOrEditJiraIssueComment")) continue;
+      if (failed.has(c.id) || keyOf(c.input?.issueIdOrKey) !== key) continue;
+      bodies.push(String(c.input?.commentBody ?? ""));
+    }
+  }
+  return bodies;
+};
+
+/** 止める理由（文字列）か、止めないなら null */
+export const doneDecision = (toolInput, entries) => {
+  if (!isDoneTransition(toolInput)) return null;
+  const key = keyOf(toolInput?.issueIdOrKey);
+  // よそのプロジェクトの課題は見ない（番号だけの ID は、このプロジェクトの課題かもしれないので見る）
+  if (key !== null && !key.startsWith(`${KEY}-`)) return null;
+  const results = commentsFor(entries, key).map(evidenceTableOf);
+  const last = results.filter((r) => r.table).at(-1);
+  if (last === undefined) {
+    return (
+      `${key ?? toolInput?.issueIdOrKey} に、完了条件ごとの証拠の表のコメントを、この会話の中でまだ書いていません。` +
+      "getJiraIssue で完了条件を読み直し、見出しに「完了条件」「証拠」の列がある表（証拠は PR・CI の実行・ファイル:行）を " +
+      "addOrEditJiraIssueComment で書いてから、もう一度「完了」に移してください。"
+    );
+  }
+  if (last.unmet > 0) {
+    return (
+      `${key} の証拠の表に「未達」が ${last.unmet} 行あります。未達が1つでもあれば完了にしません。` +
+      "未達の部分をほかの課題に移すのは完了条件を書き換えることなので、選択肢としてオーナーに出してください。"
+    );
+  }
+  return null;
+};
+
+const readStdin = async () => {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+};
+
+const main = async () => {
+  const input = JSON.parse((await readStdin()) || "{}");
+  if (!String(input.tool_name ?? "").endsWith("transitionJiraIssue")) return;
+  let entries = [];
+  if (typeof input.transcript_path === "string") {
+    try {
+      entries = readFileSync(input.transcript_path, "utf8")
+        .split("\n")
+        .flatMap((l) => {
+          try {
+            return [JSON.parse(l)];
+          } catch {
+            return [];
+          }
+        });
+    } catch {
+      entries = [];
+    }
+  }
+  const reason = doneDecision(input.tool_input, entries);
+  if (reason === null) return;
+  process.stderr.write(`止めました：${reason}（CLAUDE.md「課題を完了にする前に」）\n`);
+  process.exit(BLOCK);
+};
+
+// テストから import したときは動かさない（ほかの Hook と同じ書き方）
+if (process.argv[1] && process.argv[1].replace(/\\/g, "/").endsWith("guard-done-evidence.mjs")) {
+  main().catch((error) => {
+    // 読めないときは通す（Hook の故障で Jira の操作を止め続けないため。通したことは知らせる）
+    console.error(`guard-done-evidence を実行できませんでした（通します）：${error.message}`);
+  });
+}

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { checkCli, checkTerraform } from "../../.claude/hooks/guard-aws-cost.mjs";
+import { doneDecision, evidenceTableOf, keyOf } from "../../.claude/hooks/guard-done-evidence.mjs";
 import { findDestructive } from "../../.claude/hooks/guard-delete.mjs";
 import { findInlineBackslashRisk } from "../../.claude/hooks/guard-inline-backslash.mjs";
 import {
@@ -101,8 +102,10 @@ describe("guard-jira-fields", () => {
     assert.equal(findMissingJiraFields({ ...base, additional_fields: {} }).length, 3);
   });
   test("そろっていれば通す。よそのプロジェクトとエピックは見ない", () => {
-    const ok = { customfield_10034: 3, duedate: "2026-12-01", customfield_10015: "2026-11-30" };
+    const ok = { customfield_10016: 3, duedate: "2026-12-01", customfield_10015: "2026-11-30" };
     assert.equal(findMissingJiraFields({ ...base, additional_fields: ok }).length, 0);
+    // nori-adventure のポイントの欄（このプロジェクトにはない）を使ったら止める
+    assert.equal(findMissingJiraFields({ ...base, additional_fields: { ...ok, customfield_10034: 3 } }).length, 1);
     assert.equal(findMissingJiraFields({ projectKey: "OTHER", additional_fields: {} }).length, 0);
     assert.equal(findMissingJiraFields({ ...base, issueType: "エピック", additional_fields: {} }).length, 0);
   });
@@ -132,6 +135,41 @@ describe("guard-aws-cost", () => {
   test("aws CLI の有料の操作を止める", () => {
     assert.equal(checkCli("aws ec2 create-nat-gateway --subnet-id x").length, 1);
     assert.equal(checkCli("aws sts get-caller-identity").length, 0);
+  });
+});
+
+describe("guard-done-evidence", () => {
+  const TABLE = ["| 完了条件 | 証拠 | 結果 |", "| --- | --- | --- |", "| テストが通る | PR #3 | 達成 |"].join("\n");
+  // 会話の記録の形：道具の呼び出し（assistant）と、その結果（user）
+  const comment = (key, body, id = "t1", isError = false) => [
+    { message: { content: [{ type: "tool_use", id, name: "mcp__x__addOrEditJiraIssueComment", input: { issueIdOrKey: key, commentBody: body } }] } },
+    { message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "ok" }] } },
+  ];
+  const done = (key) => ({ issueIdOrKey: key, transitionId: "31" });
+
+  test("証拠の表のコメントがなければ止める", () => {
+    assert.notEqual(doneDecision(done("SC3-8"), []), null);
+    // 別の課題に書いた表は数えない
+    assert.notEqual(doneDecision(done("SC3-8"), comment("SC3-9", TABLE)), null);
+    // 失敗したコメントは数えない
+    assert.notEqual(doneDecision(done("SC3-8"), comment("SC3-8", TABLE, "t1", true)), null);
+    // 表でない文だけのコメントは数えない
+    assert.notEqual(doneDecision(done("SC3-8"), comment("SC3-8", "完了条件はすべて満たしました")), null);
+  });
+  test("表に「未達」があれば止める", () => {
+    const unmet = `${TABLE}\n| CI が緑 | なし | 未達 |`;
+    assert.match(doneDecision(done("SC3-8"), comment("SC3-8", unmet)), /未達/);
+  });
+  test("表があれば通す。完了でない遷移・よそのプロジェクトは見ない", () => {
+    assert.equal(doneDecision(done("SC3-8"), comment("sc3-8", TABLE)), null);
+    assert.equal(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "完了" }, comment("SC3-8", TABLE)), null);
+    assert.equal(doneDecision({ issueIdOrKey: "SC3-8", transitionId: "21" }, []), null);
+    assert.equal(doneDecision(done("OTHER-1"), []), null);
+  });
+  test("名前での完了の指定と、URL の課題キーを読む", () => {
+    assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Done" }, []), null);
+    assert.equal(keyOf("https://example.atlassian.net/browse/SC3-12"), "SC3-12");
+    assert.deepEqual(evidenceTableOf("| 項目 | 結果 |\n| --- | --- |\n| a | 未達 |"), { table: false, unmet: 0 });
   });
 });
 
