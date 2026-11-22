@@ -130,6 +130,58 @@ def test_cross_table_rules(seeded: Connection, rule: str) -> None:
     assert scalar(seeded, CROSS_TABLE_RULES[rule]) == 0
 
 
+# ---- 監査ログ（守りの決まり5：すべての状態変更とコメントを残す） ----
+
+
+def test_every_comment_has_audit_log(seeded: Connection) -> None:
+    missing = scalar(
+        seeded,
+        """
+        SELECT count(*) FROM comments m
+        WHERE NOT EXISTS (
+          SELECT 1 FROM audit_logs l
+          WHERE l.target = 'comment:' || m.id AND l.user_id = m.author_id
+        )""",
+    )
+    assert missing == 0
+
+
+def test_every_state_change_has_audit_log(seeded: Connection) -> None:
+    """申請・承認・確認の各日時に、同じ人・同じ日時の監査ログがある。
+    （差し戻しには日時の列がないので、ここでは確かめない）"""
+    missing = scalar(
+        seeded,
+        """
+        SELECT count(*) FROM assessments a, LATERAL (VALUES
+            ('submit', a.submitted_by, a.submitted_at),
+            ('approve', a.approved_by, a.approved_at),
+            ('review', a.reviewed_by, a.reviewed_at)
+          ) AS e(action, who, at)
+        WHERE e.who IS NOT NULL AND e.at IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM audit_logs l
+            WHERE l.target = 'assessment:' || a.id AND l.user_id = e.who
+              AND l.created_at = e.at)""",
+    )
+    assert missing == 0
+
+
+def test_audit_logs_follow_event_order(seeded: Connection) -> None:
+    """同じ版の監査ログは、申請 → 承認 → 確認の順の日時になっている。"""
+    wrong = scalar(
+        seeded,
+        """
+        SELECT count(*) FROM assessments a
+        WHERE a.submitted_at >= a.approved_at
+           OR a.approved_at >= a.reviewed_at
+           OR EXISTS (
+             SELECT 1 FROM comments m
+             WHERE m.assessment_id = a.id AND m.kind <> 'answer'
+               AND m.created_at < a.approved_at)""",
+    )
+    assert wrong == 0
+
+
 # ---- #19 他社のテストの材料 ----
 
 

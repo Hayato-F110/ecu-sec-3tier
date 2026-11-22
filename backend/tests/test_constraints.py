@@ -15,6 +15,8 @@ from sqlalchemy import Connection, text
 from sqlalchemy.exc import IntegrityError
 
 FULL_WIDTH_SPACE = "　"
+# 見えない空白：ノーブレークスペース、ゼロ幅スペース・非接合子・接合子、単語結合子、BOM
+INVISIBLE = [" ", "​", "‌", "‍", "⁠", "﻿"]
 
 
 @dataclass
@@ -195,7 +197,9 @@ def test_approval_fields_only_on_approved(
 # 差し戻しの理由（#8）
 
 
-@pytest.mark.parametrize("reason", [None, "", "   ", FULL_WIDTH_SPACE * 2, " \t\n"])
+@pytest.mark.parametrize(
+    "reason", [None, "", "   ", FULL_WIDTH_SPACE * 2, " \t\n", *INVISIBLE, "​ 　﻿"]
+)
 def test_reject_requires_reason(conn: Connection, base: Base, reason: str | None) -> None:
     row = version_row(base, 1, "rejected", reject_reason=reason)
     violates(conn, "ck_assessments_reject_reason", ASSESSMENT, **row)
@@ -217,6 +221,22 @@ def test_reviewed_states_require_reviewer(conn: Connection, base: Base, review: 
         fields = {"review_status": review, "reviewed_by": base.reviewer, "reviewed_at": NOW}
         row = version_row(base, 2, "approved", **(fields | {column: None}))
         violates(conn, "ck_assessments_reviewed_fields", ASSESSMENT, **row)
+
+
+@pytest.mark.parametrize("status", ["draft", "pending", "rejected"])
+@pytest.mark.parametrize(
+    "fields",
+    [{"reviewed_by": True, "reviewed_at": NOW}, {"reviewed_by": True}, {"reviewed_at": NOW}],
+)
+def test_unapproved_has_no_reviewer(
+    conn: Connection, base: Base, status: str, fields: dict
+) -> None:
+    """確認状況が空（承認済みでない）の版に、確認者・確認日時を入れられないこと。
+    （1回目のレビューの指摘：NULL のため CHECK が働かなかった）"""
+    if "reviewed_by" in fields:
+        fields = fields | {"reviewed_by": base.reviewer}
+    row = version_row(base, 1, status, **fields)
+    violates(conn, "ck_assessments_reviewed_fields", ASSESSMENT, **row)
 
 
 def test_unreviewed_has_no_reviewer(conn: Connection, base: Base) -> None:
@@ -356,7 +376,7 @@ def add_comment(conn: Connection, a: int, u: int, kind: str, parent: int | None 
     return insert(conn, COMMENT, a=a, p=parent, u=u, k=kind, b="本文")
 
 
-@pytest.mark.parametrize("body", ["", "  ", FULL_WIDTH_SPACE, "\n"])
+@pytest.mark.parametrize("body", ["", "  ", FULL_WIDTH_SPACE, "\n", *INVISIBLE])
 def test_blank_comment_is_rejected(conn: Connection, base: Base, body: str) -> None:
     a = add_version(conn, base, 1, "approved")
     violates(conn, "ck_comments_body", COMMENT, a=a, p=None, u=base.reviewer, k="question", b=body)

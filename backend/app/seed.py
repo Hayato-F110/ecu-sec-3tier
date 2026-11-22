@@ -172,18 +172,17 @@ def add_history(
         add_version(session, rng, draft, items)
         return
 
+    # 出来事は「申請 → 承認 → コメント → 確認 → 次の版の申請」の順。
+    # 監査ログの日時は、その出来事の日時（submitted_at など）をそのまま使う
     v1 = approved_version(clock, ecu, su)
     add_version(session, rng, v1, items)
-    audit(session, clock, su.editor, "submit", v1)
-    audit(session, clock, su.approver, "approve", v1)
+    audit(session, su.editor, "submit", f"assessment:{v1.id}", v1.submitted_at)
+    audit(session, su.approver, "approve", f"assessment:{v1.id}", v1.approved_at)
 
     if pattern == 0:
         return
 
-    v1.reviewed_by = reviewer.id
-    v1.reviewed_at = clock.tick()
     if pattern == 1:
-        v1.review_status = "confirmed"
         question = add_comment(session, clock, v1, reviewer, "question", items[0])
         answer = add_comment(session, clock, v1, su.approver, "answer", items[0], question)
         session.add_all(
@@ -192,7 +191,7 @@ def add_history(
                 CommentRead(user_id=reviewer.id, comment_id=answer.id, read_at=clock.tick()),
             ]
         )
-        audit(session, clock, reviewer, "confirm", v1)
+        review(session, clock, v1, reviewer, "confirmed")
         v2 = Assessment(
             ecu_id=ecu.id,
             version=2,
@@ -201,12 +200,11 @@ def add_history(
             submitted_at=clock.tick(),
         )
         add_version(session, rng, v2, items)
-        audit(session, clock, su.editor, "submit", v2)
+        audit(session, su.editor, "submit", f"assessment:{v2.id}", v2.submitted_at)
     else:
-        v1.review_status = "change_requested"
         request = add_comment(session, clock, v1, reviewer, "change_request", items[1])
         session.add(CommentRead(user_id=su.editor.id, comment_id=request.id, read_at=clock.tick()))
-        audit(session, clock, reviewer, "request_change", v1)
+        review(session, clock, v1, reviewer, "change_requested")
         v2 = Assessment(
             ecu_id=ecu.id,
             version=2,
@@ -216,8 +214,17 @@ def add_history(
             reject_reason="（ダミー）根拠の説明が足りないため差し戻します",
         )
         add_version(session, rng, v2, items)
-        audit(session, clock, su.editor, "submit", v2)
-        audit(session, clock, su.approver, "reject", v2)
+        audit(session, su.editor, "submit", f"assessment:{v2.id}", v2.submitted_at)
+        audit(session, su.approver, "reject", f"assessment:{v2.id}", clock.tick())
+
+
+def review(session: Session, clock: Clock, version: Assessment, reviewer: User, status: str):
+    """メーカーの確認者が、確認完了か修正依頼を記録する。"""
+    version.review_status = status
+    version.reviewed_by = reviewer.id
+    version.reviewed_at = clock.tick()
+    action = "confirm" if status == "confirmed" else "request_change"
+    audit(session, reviewer, action, f"assessment:{version.id}", version.reviewed_at)
 
 
 def approved_version(clock: Clock, ecu: Ecu, su: SupplierUsers) -> Assessment:
@@ -279,17 +286,19 @@ def add_comment(
     )
     session.add(comment)
     session.flush()
+    # コメントも監査ログに残す（守りの決まり5）
+    audit(session, author, f"comment_{kind}", f"comment:{comment.id}", comment.created_at)
     return comment
 
 
-def audit(session: Session, clock: Clock, user: User, action: str, version: Assessment) -> None:
+def audit(session: Session, user: User, action: str, target: str, at: datetime | None) -> None:
     session.add(
         AuditLog(
             user_id=user.id,
             action=action,
-            target=f"assessment:{version.id}",
+            target=target,
             ip=f"192.0.2.{user.id % 250 + 1}",
-            created_at=clock.tick(),
+            created_at=at,
         )
     )
 

@@ -47,8 +47,10 @@ REVIEW_STATUSES = ("unreviewed", "confirmed", "change_requested")
 ENTRY_STATUSES = ("done", "in_progress", "not_done", "not_applicable")
 COMMENT_KINDS = ("question", "answer", "change_request")
 
-# 空白（半角・全角）以外の文字が1つ以上ある。PostgreSQL の正規表現
-NOT_BLANK = "~ '[^[:space:]　]'"
+# 空白以外の文字が1つ以上ある（PostgreSQL の正規表現）。空白には、半角・全角のほか、
+# 見えない文字（ノーブレークスペース、ゼロ幅スペース・接合子、単語結合子、BOM）も含める
+INVISIBLE_SPACES = " ​‌‍⁠﻿　"
+NOT_BLANK = f"~ '[^[:space:]{INVISIBLE_SPACES}]'"
 
 
 def one_of(column: str, values: tuple[str, ...]) -> str:
@@ -146,9 +148,11 @@ class Assessment(Base):
         ),
         # 確認完了・修正依頼中なら確認者と日時が必須。それ以外は空
         CheckConstraint(
-            "(review_status IN ('confirmed', 'change_requested'))"
+            # review_status が空（NULL）だと IN の結果も NULL になり、CHECK は NULL を合格にする。
+            # COALESCE で「空なら確認していない（false）」とみなし、すり抜けを防ぐ
+            "COALESCE(review_status IN ('confirmed', 'change_requested'), false)"
             " = (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)"
-            " AND (review_status IN ('confirmed', 'change_requested')"
+            " AND (COALESCE(review_status IN ('confirmed', 'change_requested'), false)"
             " OR (reviewed_by IS NULL AND reviewed_at IS NULL))",
             name="reviewed_fields",
         ),
@@ -165,13 +169,14 @@ class Assessment(Base):
     ecu_id: Mapped[int] = mapped_column(restrict("ecus.id"))
     version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))
-    submitted_by: Mapped[int | None] = mapped_column(restrict("users.id"))
-    approved_by: Mapped[int | None] = mapped_column(restrict("users.id"))
+    # 外部キーの列には索引を付ける（参照先を消すときの RESTRICT の確かめが、表を全部読まずに済む）
+    submitted_by: Mapped[int | None] = mapped_column(restrict("users.id"), index=True)
+    approved_by: Mapped[int | None] = mapped_column(restrict("users.id"), index=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[str | None] = mapped_column(Text)
     review_status: Mapped[str | None] = mapped_column(String(20))
-    reviewed_by: Mapped[int | None] = mapped_column(restrict("users.id"))
+    reviewed_by: Mapped[int | None] = mapped_column(restrict("users.id"), index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -192,7 +197,7 @@ class AssessmentEntry(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     assessment_id: Mapped[int] = mapped_column(restrict("assessments.id"))
-    item_id: Mapped[int] = mapped_column(restrict("measure_items.id"))
+    item_id: Mapped[int] = mapped_column(restrict("measure_items.id"), index=True)
     status: Mapped[str] = mapped_column(String(20))
     evidence: Mapped[str] = mapped_column(Text)
     planned_date: Mapped[date | None] = mapped_column(Date)
@@ -234,9 +239,9 @@ class Comment(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     assessment_id: Mapped[int] = mapped_column(restrict("assessments.id"), index=True)
-    item_id: Mapped[int | None] = mapped_column(restrict("measure_items.id"))
-    parent_id: Mapped[int | None] = mapped_column(BigInteger)
-    author_id: Mapped[int] = mapped_column(restrict("users.id"))
+    item_id: Mapped[int | None] = mapped_column(restrict("measure_items.id"), index=True)
+    parent_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    author_id: Mapped[int] = mapped_column(restrict("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(20))
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -248,5 +253,5 @@ class CommentRead(Base):
     __tablename__ = "comment_reads"
 
     user_id: Mapped[int] = mapped_column(restrict("users.id"), primary_key=True)
-    comment_id: Mapped[int] = mapped_column(restrict("comments.id"), primary_key=True)
+    comment_id: Mapped[int] = mapped_column(restrict("comments.id"), primary_key=True, index=True)
     read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
