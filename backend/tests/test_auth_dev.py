@@ -1,0 +1,65 @@
+"""仮の本人確認（X-Dev-User-Id）のテスト（docs/test-plans/SC3-9.md の #3）。
+
+Day 6 に JWT へ差し替えるまでの仮の仕組み。既定は無効で、無効なら必ず 401 になることを確かめる。
+"""
+
+import pytest
+from sqlalchemy.orm import Session
+
+from tests.api_helpers import Api, make_api
+
+ENDPOINTS = [
+    ("GET", "/api/ecus"),
+    ("GET", "/api/ecus/{ecu}/assessment"),
+    ("PUT", "/api/ecus/{ecu}/draft"),
+]
+BODY = {"entries": [{"item_id": 1, "status": "done", "evidence": "根拠"}]}
+
+
+def call(api: Api, method: str, path: str, headers: dict[str, str]):
+    url = path.format(ecu=api.ecu("DMY-A004").id)
+    if method == "GET":
+        return api.client.get(url, headers=headers)
+    return api.client.put(url, json=BODY, headers=headers)
+
+
+@pytest.mark.parametrize(("method", "path"), ENDPOINTS)
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"X-Dev-User-Id": ""},
+        {"X-Dev-User-Id": "abc"},
+        {"X-Dev-User-Id": "999999"},
+        {"X-Dev-User-Id": "-1"},
+    ],
+    ids=["none", "empty", "not_number", "no_such_user", "negative"],
+)
+def test_missing_or_unknown_user_is_401(api: Api, method: str, path: str, headers: dict) -> None:
+    assert call(api, method, path, headers).status_code == 401
+
+
+@pytest.mark.parametrize(("method", "path"), ENDPOINTS)
+def test_inactive_user_is_401(api: Api, method: str, path: str) -> None:
+    user = api.user("a-editor@example.com")
+    user.is_active = False
+    api.session.commit()
+    assert call(api, method, path, {"X-Dev-User-Id": str(user.id)}).status_code == 401
+
+
+@pytest.mark.parametrize(("method", "path"), ENDPOINTS)
+def test_disabled_dev_auth_rejects_valid_header(
+    db_session: Session, method: str, path: str
+) -> None:
+    api = make_api(db_session, dev_auth_enabled=False)
+    headers = api.headers("a-editor@example.com")
+    assert call(api, method, path, headers).status_code == 401
+
+
+def test_dev_auth_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """設定を何も書かなければ無効（AWS などに、うっかり有効のまま出さない）。"""
+    from app.config import Settings
+
+    monkeypatch.delenv("DEV_AUTH_ENABLED", raising=False)
+    settings = Settings(_env_file=None, postgres_db="x", postgres_user="x", postgres_password="x")
+    assert settings.dev_auth_enabled is False
