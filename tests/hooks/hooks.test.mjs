@@ -355,6 +355,47 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     const inCode = `${AWS_STEPS}\`\`\`\nhttps://docs.aws.amazon.com/kms/\n\`\`\`\n`;
     assert.notEqual(findStepsWithoutSource(inCode), null);
   });
+  // ---- レビュー2回目の指摘（直しを戻すと落ちる） ----
+  test("（2回目-1）作業の報告（過去形）と、「」つきの選択肢の一覧は止めない", () => {
+    const report =
+      "完了したこと（GitHub の PR #7）\n- 承認の画面に「承認」ボタンを入れた\n- 「下書き」タブを開くテストを足した\n";
+    assert.equal(findStepsWithoutSource(report), null);
+    const choices = "決めてほしいこと（GitHub の PR #6）\n1. 「A 案」を選ぶ\n2. 「B 案」を選ぶ\n";
+    assert.equal(findStepsWithoutSource(choices), null);
+  });
+  test("（2回目-2）「画面」とあっても、状態の流れの矢印は数えない", () => {
+    const flow = "Jira の SC3-9。画面では「下書き」→「申請中」→「承認済み」と変わります。";
+    assert.equal(findStepsWithoutSource(flow), null);
+  });
+  test("（2回目-3）インラインのコードで書いた手順も止める", () => {
+    const code = "1. AWS で `IAM` → `Users` を開く\n2. `Create user` を押す\n";
+    assert.notEqual(findStepsWithoutSource(code), null);
+  });
+  test("（2回目-4）①②・表の行・「>」の階層の書き方も手順とみなす", () => {
+    assert.notEqual(findStepsWithoutSource("AWS のコンソールで\n① 「KMS」を開く\n② 「キー」を押す\n"), null);
+    assert.notEqual(
+      findStepsWithoutSource("| 1 | AWS のコンソールで「KMS」を開く |\n| 2 | 左のメニューの「キー」を押す |\n"),
+      null,
+    );
+    assert.notEqual(
+      findStepsWithoutSource("AWS コンソールの KMS > カスタマー管理型のキー を開く。次に Billing > 請求書 を開く。"),
+      null,
+    );
+  });
+  test("（2回目-5）手順のサービスに合う公式の URL が要る（AWS の手順に GitHub の URL では通さない）", () => {
+    assert.notEqual(findStepsWithoutSource(`${AWS_STEPS}出典：https://docs.github.com/ja/actions\n`), null);
+  });
+  test("（2回目-6）AWS のブログと repost.aws は公式の出典とみなさない", () => {
+    assert.notEqual(findStepsWithoutSource(`${AWS_STEPS}出典：https://aws.amazon.com/blogs/security/foo\n`), null);
+    assert.notEqual(findStepsWithoutSource(`${AWS_STEPS}出典：https://repost.aws/questions/abc\n`), null);
+  });
+  test("（2回目-7）ホスト名のすぐあとに句読点や「>」が続く公式の URL も出典とみなす", () => {
+    assert.equal(findStepsWithoutSource(`${AWS_STEPS}出典はhttps://docs.aws.amazon.com。\n`), null);
+    assert.equal(findStepsWithoutSource(`${AWS_STEPS}<https://docs.aws.amazon.com>\n`), null);
+  });
+  test("（2回目-8）操作が1つだけの行は、1つと数える", () => {
+    assert.equal(findStepsWithoutSource("1. 「KMS」→「キー」を開く (AWS)"), null);
+  });
   test("画面の操作の手順でなければ止めない", () => {
     assert.equal(findStepsWithoutSource("AWS の請求は今月 0 ドルでした。"), null);
     assert.equal(findStepsWithoutSource("1. テストを書く\n2. 実装する\n3. PR を出す"), null);

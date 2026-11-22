@@ -5,7 +5,8 @@
 //       2026-11-22 に、AWS の画面の手順（KMS・Tag Editor・EC2 グローバルビュー）を記憶で書き、
 //       Tag Editor が Resource Explorer に変わっていたことと、EC2 グローバルビューの場所の誤りに
 //       気づかなかった。文の決まりだけでは守れなかったので、この Hook で止める（オーナーに提案した）。
-// 出典は「公式の資料」の URL だけを認める（ブログ・まとめは不可）。
+// 出典は「公式の資料」の URL だけを認める（ブログ・まとめ・利用者どうしの質問サイトは不可）。
+// 手順のサービス（AWS・GitHub・Atlassian）ごとに、そのサービスの公式の URL が要る。
 // 同じ止め方を続けないよう、止めたあとの再実行（stop_hook_active）では止めない。
 
 // 抜け道（直さないと決めたもの）：ほかの Stop の Hook が止めたあとの書き直し（stop_hook_active）は
@@ -56,39 +57,97 @@ const SERVICE = new RegExp(
 // 画面の操作の言葉（「を開いて」「を選んで」などの形も含める）
 const UI_VERB =
   /を?開[くきいけ]|を?押[すしせ]|を?選[ぶびんべ]|を?入れ|入力|左のメニュー|クリック|タブ|に切り替え/;
-// 画面の部品の手がかり（「」で囲んだ名前、メニュー・ボタンなど）。これがない行は手順とみなさない
-// （「1. A 案を選ぶ」のような、決めてほしいことの一覧を止めないため）
-const UI_TARGET = /「[^」]+」|メニュー|ボタン|画面|タブ|欄|コンソール/;
-// 箇条書き・番号つきの行（日本語では「・」のあとに空白がないことが多い）
-const LIST_ITEM = /^\s*(\d+[.)．]\s*|[-*]\s+|・\s*)/;
-// 公式の資料（ホスト名のあとは「/」・空白・かっこ・行の終わりのどれか）
-const OFFICIAL =
-  /https:\/\/(docs\.aws\.amazon\.com|aws\.amazon\.com|repost\.aws|docs\.github\.com|support\.atlassian\.com|confluence\.atlassian\.com|developer\.atlassian\.com)(\/|\s|$|\)|）)/m;
+// 画面の部品の言葉。手順のまとまりに、これかサービスの名前が1つもなければ手順とみなさない
+// （「1. 「A 案」を選ぶ」のような、決めてほしいことの一覧を止めないため）
+const CHROME = /メニュー|ボタン|画面|タブ|コンソール|検索欄|リージョン/;
+// 過去形で終わる行（「〜を入れた」などの作業の報告）は、操作の手順とみなさない
+const PAST = /た[。）)]?\s*\|?\s*$/;
+// 箇条書き・番号つき・①②・表の行（日本語では「・」のあとに空白がないことが多い）
+const LIST_ITEM = /^\s*(\d+[.)．]\s*|[-*]\s+|・\s*|[①-⑳]\s*|\|)/;
 
-/** 画面の操作の手順の数（箇条書きの操作の行と、サービスの名前か画面の言葉がある行の矢印の数） */
-const countSteps = (text) => {
-  let steps = 0;
-  for (const line of text.split("\n")) {
-    const onScreen = UI_TARGET.test(line) || SERVICE.test(line);
-    if (LIST_ITEM.test(line) && UI_VERB.test(line) && onScreen) steps += 1;
-    // 「下書き」→「申請中」のような状態の流れは数えない。矢印の前後の「」の中にサービスの名前があるか、
-    // 行に画面の言葉があるときだけ数える
-    const onUi = /メニュー|ボタン|画面|タブ|コンソール/.test(line);
-    for (const m of line.matchAll(/「([^」]+)」\s*→\s*(?=「([^」]+)」)/g)) {
-      if (onUi || SERVICE.test(m[1]) || SERVICE.test(m[2])) steps += 1;
-    }
+// 手順のサービスごとの公式の資料（ブログ・利用者どうしの質問サイトは不可）。
+// ホスト名のあとは、英数字・「.」・「-」以外（「/」・空白・句読点・かっこ・「>」など）
+const OFFICIAL = {
+  aws: /https:\/\/(docs\.aws\.amazon\.com|aws\.amazon\.com(?!\/blogs))(?![\w.-])/,
+  github: /https:\/\/docs\.github\.com(?![\w.-])/,
+  atlassian: /https:\/\/(support|confluence|developer)\.atlassian\.com(?![\w.-])/,
+};
+const providersOf = (text) => {
+  const found = new Set();
+  for (const m of text.matchAll(new RegExp(SERVICE.source, "g"))) {
+    if (m[0] === "GitHub") found.add("github");
+    else if (/Jira|Atlassian|Confluence/.test(m[0])) found.add("atlassian");
+    else found.add("aws");
   }
-  return steps;
+  return found;
 };
 
-/** 止める理由（文字列）か、止めないなら null。コードの中の言葉・URL は見ない */
+/** 1行の中の矢印・階層（「KMS」→「キー」、KMS > キー）の数 */
+const arrowsOf = (line) => {
+  let n = 0;
+  // 「」で囲んだ名前どうしの矢印：前後のどちらかがサービスの名前のときだけ（状態の流れを数えない）
+  for (const m of line.matchAll(/「([^」]+)」\s*[→>＞]\s*(?=「([^」]+)」)/g)) {
+    if (SERVICE.test(m[1]) || SERVICE.test(m[2])) n += 1;
+  }
+  // 「」のない矢印・階層：行にサービスの名前があるときだけ
+  if (SERVICE.test(line)) {
+    const unquoted = line.replace(/「[^」]*」/g, "Q");
+    n += (unquoted.match(/(?<!Q)\s[→>＞]\s(?!Q)/g) ?? []).length;
+  }
+  return n;
+};
+
+/** 画面の操作の手順の数と、手順に出てくる文章（どのサービスの手順かを見るため） */
+const countSteps = (text) => {
+  const lines = text.split("\n");
+  let steps = 0;
+  let stepText = "";
+  for (let i = 0; i < lines.length; ) {
+    if (!LIST_ITEM.test(lines[i])) {
+      // 箇条書きでない行は、矢印・階層だけを数える
+      const n = arrowsOf(lines[i]);
+      if (n > 0) {
+        steps += n;
+        stepText += `${lines[i]}\n`;
+      }
+      i += 1;
+      continue;
+    }
+    // 続いている箇条書きを1つのまとまりとして見る
+    let j = i;
+    while (j < lines.length && LIST_ITEM.test(lines[j])) j += 1;
+    const block = lines.slice(i, j);
+    const intro = i > 0 ? lines[i - 1] : "";
+    const onScreen = block.some((l) => SERVICE.test(l) || CHROME.test(l));
+    for (const line of block) {
+      const isStep = onScreen && UI_VERB.test(line) && !PAST.test(line) ? 1 : 0;
+      // 1行で数えるのは、操作の行（1）と、その行の矢印の数の多いほう
+      const n = Math.max(isStep, arrowsOf(line));
+      if (n > 0) steps += n;
+    }
+    if (onScreen) stepText += `${intro}\n${block.join("\n")}\n`;
+    i = j;
+  }
+  return { steps, stepText };
+};
+
+/** 止める理由（文字列）か、止めないなら null。コードブロックの中の言葉と、コードの中の URL は見ない */
 export const findStepsWithoutSource = (text) => {
   if (typeof text !== "string" || text === "") return null;
-  const plain = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
-  if (!SERVICE.test(plain)) return null;
-  if (countSteps(plain) < 2) return null;
-  if (OFFICIAL.test(plain)) return null;
-  return "外部サービスの画面の手順があるのに、公式の資料の URL（出典）がない";
+  const noBlocks = text.replace(/```[\s\S]*?```/g, "");
+  // 手順を数えるときは、インラインのコード（`IAM`）の中の文字も見る
+  const forSteps = noBlocks.replace(/`([^`\n]*)`/g, "$1");
+  // 出典の URL は、コードの外にあるものだけを認める
+  const forUrls = noBlocks.replace(/`[^`\n]*`/g, "");
+  if (!SERVICE.test(forSteps)) return null;
+  const { steps, stepText } = countSteps(forSteps);
+  if (steps < 2) return null;
+  const providers = providersOf(stepText);
+  const missing = [...(providers.size > 0 ? providers : ["aws"])].filter(
+    (p) => !OFFICIAL[p].test(forUrls),
+  );
+  if (missing.length === 0) return null;
+  return `外部サービスの画面の手順があるのに、公式の資料の URL（出典）がない（${missing.join("・")}）`;
 };
 
 const readStdin = async () => {

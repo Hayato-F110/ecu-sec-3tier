@@ -19,7 +19,7 @@ nori-adventure（2026-11）の設定を、このプロジェクト向けに引�
 | japanese-reminder | 道具の後 | 日本語の決まりを一言差し込む | そのまま |
 | plain-terms | 応答の終わり | `plain-terms.json` の用語を説明なしで使ったら止める | そのまま（用語の一覧も引き継ぎ） |
 | wait-needs-next | 応答の終わり | 「待つ」と書いたのに「待つ間に進める課題：」がなければ止める | そのまま |
-| guard-cite-sources | 応答の終わり | AWS・GitHub・Atlassian の画面の操作の手順（操作の行が2つ以上）に、公式の資料の URL がなければ止める | 新規（2026-11-22。AWS の手順を記憶で書き、画面の変更に気づかなかったため） |
+| guard-cite-sources | 応答の終わり（その回の文章すべて） | AWS・GitHub・Atlassian の画面の操作の手順に、そのサービスの公式の資料の URL がなければ止める。手順の数え方：箇条書き（1. ・ ① 表の行）の操作の行（過去形の報告は除く。まとまりにサービスの名前か画面の部品の言葉が要る）と、サービスの名前のある矢印・階層（「KMS」→「キー」、KMS > キー）を合わせて2つ以上。ブログ・質問サイトは出典にしない。ほかの Stop の Hook が止めたあとの書き直しは調べない（抜け道） | 新規（2026-11-22。AWS の手順を記憶で書き、画面の変更に気づかなかったため） |
 | save-agent-report | サブエージェントの終わり | 報告の全文を `.claude/agent-reports/` に保存する | そのまま |
 | format-and-lint | 道具の後（編集） | Python は ruff、画面は Prettier・ESLint、Terraform は `terraform fmt` | このプロジェクト向けに書き直し |
 
