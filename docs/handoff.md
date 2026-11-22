@@ -28,4 +28,5 @@
 
 - PostgreSQL は 18 を使う（19.0 は 2026-11-19 公開で新しすぎ、RDS の対応が未確認）。Day 12 に RDS の対応版を確かめる
 - PostgreSQL 18 の公式イメージは、データの置き場所が `/var/lib/postgresql`（17 までの `/var/lib/postgresql/data` から変わった）。docker compose はそれに合わせてある
+- backend/ を作った日（`uv` で仮想環境を作ったあと）に、`.vscode/settings.json` へ Python の場所（`backend/.venv/Scripts/python.exe`）と pytest の設定（場所 `backend`・引数 `tests`）を足す。仮想環境がないうちに書くと、VS Code が「インタープリター パスを解決できません」と出す
 - 長い処理（pytest・docker compose build・terraform）は裏で動かす（Hook `guard-long-foreground` が止める）
