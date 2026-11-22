@@ -24,7 +24,12 @@ import { findSkippedCheck } from "../../.claude/hooks/guard-no-verify.mjs";
 import { findEnglishLines } from "../../.claude/hooks/japanese-reply.mjs";
 import { findUndefinedTerms } from "../../.claude/hooks/plain-terms.mjs";
 import { findPathReason, findSecretInText } from "../../.claude/hooks/protect-secrets.mjs";
-import { isCodeFile } from "../../.claude/hooks/review-before-pr.mjs";
+import {
+  hasFixEvidenceTable,
+  isCodeFile,
+  prBodyOf,
+  reviewDecision,
+} from "../../.claude/hooks/review-before-pr.mjs";
 import { findWaitWithoutNext } from "../../.claude/hooks/wait-needs-next.mjs";
 
 const ROOT = "C:/work/repo";
@@ -208,6 +213,50 @@ describe("guard-done-evidence", () => {
     assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Done" }, []), null);
     assert.equal(keyOf("https://example.atlassian.net/browse/SC3-12"), "SC3-12");
     assert.deepEqual(evidenceTableOf("| 項目 | 結果 |\n| --- | --- |\n| a | 未達 |"), { table: false, unmet: 0 });
+  });
+});
+
+describe("review-before-pr：最後のレビューのあとの直しと、直しの証拠の表", () => {
+  const CWD = "C:/w/repo";
+  const review = (id) => [
+    { cwd: CWD, message: { content: [{ type: "tool_use", id, name: "Skill", input: { skill: "code-review" } }] } },
+    { cwd: CWD, message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: "ok" }] } },
+  ];
+  const commit = { cwd: CWD, message: { content: [{ type: "tool_use", id: "c", name: "Bash", input: { command: 'git commit -m "x"' } }] } };
+  const base = { command: "gh pr create --body-file tmp/pr-body.md", cwd: CWD, diffFiles: [".claude/hooks/x.mjs"] };
+  const TABLE = [
+    "## 直しの証拠の表",
+    "",
+    "| コミット | どの指摘の直しか | 何が変わるか | 直しを戻すと落ちるテスト |",
+    "| --- | --- | --- | --- |",
+    "| abc123 | 2 回目の 1 | 完了の名前を広く見る | 指摘の直しのテスト |",
+  ].join("\n");
+
+  test("最後のコミットのあとにレビューがあれば通す", () => {
+    assert.equal(reviewDecision({ ...base, entries: [commit, ...review("r1")] }).block, false);
+  });
+  test("レビューのあとに直したら止める。直しの証拠の表があれば通す", () => {
+    const entries = [...review("r1"), commit];
+    assert.equal(reviewDecision({ ...base, entries }).block, true);
+    assert.equal(reviewDecision({ ...base, entries, prBody: TABLE }).block, false);
+  });
+  test("レビューを1回もしていなければ、表があっても止める", () => {
+    assert.equal(reviewDecision({ ...base, entries: [commit], prBody: TABLE }).block, true);
+  });
+  test("表の見分け：見出しだけ・列が違う・中身の行がないものは表とみなさない", () => {
+    assert.equal(hasFixEvidenceTable(TABLE), true);
+    assert.equal(hasFixEvidenceTable("## 直しの証拠の表\n\nなし"), false);
+    assert.equal(hasFixEvidenceTable("## 直しの証拠の表\n\n| 項目 | 結果 |\n| --- | --- |\n| a | b |"), false);
+    assert.equal(hasFixEvidenceTable(TABLE.split("\n").slice(0, 4).join("\n")), false);
+  });
+  test("PR の説明を --body-file と --body から読む", () => {
+    // Windows はファイル名の大文字と小文字を区別しないので、小文字にそろえて比べる
+    assert.equal(
+      prBodyOf("gh pr create --body-file tmp/b.md", CWD, (f) => `read:${f}`).toLowerCase(),
+      "read:c:/w/repo/tmp/b.md",
+    );
+    assert.equal(prBodyOf('gh pr create --title t --body "本文"', CWD), "本文");
+    assert.equal(prBodyOf("gh pr create --fill", CWD), "");
   });
 });
 

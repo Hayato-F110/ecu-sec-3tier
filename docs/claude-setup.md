@@ -12,7 +12,7 @@ nori-adventure（2026-11）の設定を、このプロジェクト向けに引�
 | guard-no-verify | 道具の前（コマンド） | `git commit --no-verify` などの確認を飛ばす指定を止める | そのまま |
 | guard-inline-backslash | 道具の前（コマンド） | `python -c`・`node -e` の中の Windows のパス・正規表現のバックスラッシュを止める | そのまま |
 | guard-long-foreground | 道具の前（コマンド） | 長い処理（**pytest・docker compose build/up・terraform plan/apply/destroy**・E2E・CI の見張り）を表で流すのと、検査をパイプにつなぐのを止める | 対象をこのプロジェクト向けに変更 |
-| review-before-pr | 道具の前（`gh pr create`） | コードを変える PR で、最後のコミットのあとに `/code-review` を呼んでいなければ止める | 対象の場所を `backend/`・`frontend/`・`infra/` などに変更 |
+| review-before-pr | 道具の前（`gh pr create`） | コードを変える PR で、最後のコミットのあとに `/code-review` を呼んでいなければ止める。ただし、その場所でレビューを1回以上していて、PR の説明に「直しの証拠の表」があれば通す | 対象の場所を `backend/`・`frontend/`・`infra/` などに変更。**直しの証拠の表で通す仕組みを追加**（nori の NORI-83 で作る予定だったもの。2026-11-22 にオーナーが承認） |
 | guard-jira-fields | 道具の前（Jira の作成・編集・遷移） | ポイント・期限・開始日の抜けと、スプリントへ入れる操作を止める | 課題キーと欄の ID を `project.json` から読むように変更。ポイントの欄は SC3 では `customfield_10016`（nori の `customfield_10034` は SC3 にない） |
 | guard-done-evidence | 道具の前（Jira の遷移） | 「完了」に移す前に、この会話でその課題に「完了条件」「証拠」の列がある表のコメントを書いたかを確かめる。なければ、または表に「未達」があれば止める | **新規**（harvest-before-done の代わり。2026-11-22 にオーナーが承認） |
 | japanese-reply | 道具の前・応答の終わり | 英語だけの行があれば止める | そのまま |
