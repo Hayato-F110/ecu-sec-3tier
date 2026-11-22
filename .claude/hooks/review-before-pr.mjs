@@ -3,9 +3,14 @@
 // gh pr create のとき、PR のブランチと origin/main の差分に CODE_DIRS（下）のファイルがあれば、
 // 会話の記録（ファイル全体）で、その場所の最後のコミットのあとに、その場所で成功した code-review の呼び出しがあるかを見る。
 // なければ止める（終了コード 2）。記録にその場所のコミットがなければ、その場所のレビューが 1 つあれば通す。
+// 例外（2026-11-22 にオーナーが決めた。nori の NORI-83 の残り）：このブランチの最初のコミットよりあとに、その場所で
+// レビューを1回以上していて、PR の説明（--body-file のファイル）に「直しの証拠の表」があれば通す。最後のレビューのあとの
+// 直しは、回し直さずに表でオーナーが判断するため。
 // 差分が取れないとき（origin/main がないなど）は止めずに通し、通したことを Claude に知らせる（Hook の故障で PR を止めない）。
 // nori-adventure（NORI-78）から引き継いだ。テストは tests/hooks/。
-// 見ないもの：指摘を仕分けて PR の説明に書いたか（人が見る）、merge・pull で足したコミット（レビュー済みのほかの PR）。
+// 見ないもの：指摘を仕分けて PR の説明に書いたか（人が見る）、merge・pull で足したコミット（レビュー済みのほかの PR）、
+// 何回目のレビューのあとに表を書いたか（Hook には見分けられない。表は最後の回のあとだけ書く決まり。CLAUDE.md）、
+// 表のコミットが最後のレビューのあとのコミットを全部覆っているか（オーナーが表を見て判断する）。
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -82,7 +87,7 @@ const isReview = (input) => {
 };
 
 /** 止めるか通すか。diffFiles が null なら差分が取れなかった（通して知らせる） */
-export const reviewDecision = ({ command, cwd, entries, diffFiles }) => {
+export const reviewDecision = ({ command, cwd, entries, diffFiles, prBody = "", branchStart = null }) => {
   if (!isPrCreate(command)) return { block: false, reason: "" };
   const place = prPlace(command, cwd).dir;
   if (diffFiles === null) {
@@ -124,6 +129,13 @@ export const reviewDecision = ({ command, cwd, entries, diffFiles }) => {
   });
   const ok = lastCommit >= 0 ? reviews.some((i) => i > lastCommit) : reviews.length > 0;
   if (ok) return { block: false, reason: "" };
+  // 最後のレビューのあとに直した PR（2026-11-22 にオーナーが決めた。nori の NORI-83 の残り）：
+  // このブランチの最初のコミット（branchStart）よりあとに、その場所でレビューを1回以上していて、PR の説明に
+  // 「直しの証拠の表」があれば通す（オーナーが表で判断する）。前の PR のときのレビューは数えない（/code-review の指摘 1）。
+  // branchStart が分からないときは、例外を使わない（安全な側）
+  const start = Date.parse(branchStart ?? "");
+  const reviewedOnBranch = reviews.some((i) => Date.parse(entries[i]?.timestamp ?? "") > start);
+  if (reviewedOnBranch && hasFixEvidenceTable(prBody)) return { block: false, reason: "" };
   return {
     block: true,
     reason:
@@ -133,8 +145,60 @@ export const reviewDecision = ({ command, cwd, entries, diffFiles }) => {
       "コードを変える PR は、出す前に Claude が自分で /code-review を呼ぶ）。\n" +
       "PR のブランチの場所（worktree）に移ってから、Skill の道具で code-review を呼び" +
       "（ほかの場所で呼んだレビューは数えません）、指摘を「直す／直さない（理由）」に仕分けて PR の説明に書いてから、" +
-      "もう一度 gh pr create を流してください。\n",
+      "もう一度 gh pr create を流してください。\n" +
+      "最後のレビューのあと（回数の上限に達したあと）の直しなら、回し直さずに、PR の説明（--body-file）に「## 直しの証拠の表」" +
+      "（列：コミット・どの指摘の直しか・ふつうの言葉で何が変わるか・直しを戻すと落ちるテスト）を書けば通します。\n",
   };
+};
+
+/**
+ * PR の説明に「直しの証拠の表」があるか：見出し「直しの証拠の表」のあとに、「コミット」と「落ちるテスト」の列がある表があり、
+ * 中身の行が1つ以上あること
+ */
+export const hasFixEvidenceTable = (body) => {
+  // コードブロック（``` 〜 ```）の中の見本の表は数えない（/code-review の指摘 5）
+  const text = String(body ?? "").replace(/^```[\s\S]*?^```/gm, "");
+  const at = text.search(/^#+\s*.*直しの証拠の表/m);
+  if (at < 0) return false;
+  const lines = text.slice(at).split(/\r?\n/).slice(1);
+  let header = false;
+  for (const line of lines) {
+    if (/^#+\s/.test(line)) break; // 次の見出しまで
+    if (!line.trim().startsWith("|")) {
+      if (header) break;
+      continue;
+    }
+    if (!header) {
+      header = line.includes("コミット") && line.includes("落ちるテスト");
+      if (!header) return false;
+      continue;
+    }
+    if (/^\|[\s:|-]+\|?\s*$/.test(line.trim())) continue; // 表の区切りの行
+    return true;
+  }
+  return false;
+};
+
+/**
+ * gh pr create の説明の本文：--body-file（-F）ならそのファイル、--body（-b）ならその文字列。なければ ""。
+ * 見るのは gh pr create より後ろだけ（前の git commit -F を取り違えない。/code-review の指摘 3）。
+ * dir は小文字にしていない場所を渡す（大文字と小文字を区別する OS でも読めるように。指摘 2）
+ */
+export const prBodyOf = (command, dir, read = (f) => readFileSync(f, "utf8")) => {
+  const all = stripQuoted(command);
+  const at = all.search(/gh\s+pr\s+create\b/);
+  const s = at < 0 ? "" : all.slice(at);
+  const file = s.match(/(?:--body-file|\s-F)[=\s]+("([^"]+)"|'([^']+)'|(\S+))/);
+  if (file) {
+    const p = file[2] ?? file[3] ?? file[4];
+    try {
+      return read(resolveIn(dir, p));
+    } catch {
+      return "";
+    }
+  }
+  const body = s.match(/(?:--body|\s-b)[=\s]+("((?:[^"\\]|\\.)*)"|'([^']*)')/);
+  return body ? (body[2] ?? body[3] ?? "") : "";
 };
 
 const readStdin = async () => {
@@ -178,7 +242,29 @@ const main = async () => {
       entries = [];
     }
   }
-  const d = reviewDecision({ command, cwd, entries, diffFiles });
+  // 説明のファイルは、小文字にしていない場所から読む（prPlace の dir は比べるために小文字にしてある）
+  const bodyDir = resolveIn(cwd, leadingDir(stripQuoted(command)) ?? ".");
+  // このブランチの最初のコミットの時刻（前の PR のときのレビューを数えないため）
+  let branchStart = null;
+  try {
+    branchStart =
+      execFileSync("git", ["-C", dir, "log", "--reverse", "--format=%cI", `origin/main..${head ?? "HEAD"}`], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .split("\n")
+        .find((l) => l.trim() !== "") ?? null;
+  } catch {
+    branchStart = null;
+  }
+  const d = reviewDecision({
+    command,
+    cwd,
+    entries,
+    diffFiles,
+    prBody: prBodyOf(command, bodyDir),
+    branchStart,
+  });
   if (d.block) {
     process.stderr.write(d.reason);
     process.exit(BLOCK);
