@@ -1,18 +1,18 @@
 # 引き継ぎ
 
-最終更新：2026-11-22 18:20（Day 1 の途中）
+最終更新：2026-11-22（Day 1 の途中。PR #3 のマージのあと）
 
 ## いまの状態
 
 - Day 1（SC3-2）を作業中。Claude 側の準備（Git、CLAUDE.md、Hook・スキル・サブエージェント、docs、docker compose の DB）はできた
 - GitHub：オーナーのアカウントの `ecu-sec-3tier`（公開。2026-11-22 にオーナーが決めた。コミットの作者のメールは、このリポジトリの設定で GitHub の非公開用のメール）
 - Jira：プロジェクト「ECUセキュリティ対策管理」（キー SC3）。エピック6件（SC3-1・3〜7）、ストーリー18件（Day 1〜18 ＝ SC3-2・8〜24。ポイント各5、開始日・期限は 11/22〜12/9 の毎日）
-- 作業中のブランチ：`feature/SC3-2-jira-done-evidence`（Jira の欄 ID のそろえと、新しい Hook `guard-done-evidence`）
+- 作業中のブランチ：なし（PR #1〜#3 はマージ済み。README・SECURITY.md・GitHub の設定（トピック、マージ後のブランチの自動削除、非公開での脆弱性の報告、Dependabot）まで済み）
 - オーナーが `.env` を作った（Claude は中身を読まない）
 
 ## オーナーにお願いすること
 
-1. AWS：プランとクレジットの確認、Budgets（ゼロ支出予算）、練習用 IAM ユーザーと MFA、IAM ユーザーへの請求の画面の公開、CLI 用のアクセスキー
+1. AWS：リージョンを東京に切り替え、Tag Editor（すべてのリージョン）で kids-play の消し残しの確認、Budgets（ゼロ支出予算）、練習用 IAM ユーザーと MFA、IAM ユーザーへの請求の画面の公開、CLI 用のアクセスキー
 2. AWS CLI と Terraform を入れて（`winget install --id Amazon.AWSCLI --exact`・`winget install --id Hashicorp.Terraform --exact`）、ご自身のターミナルで `aws configure`
 3. Jira で、スプリント1（Day 1〜3 ＝ SC3-2・8・9）を作って課題を入れる（スプリントの作成・割り当ては Claude からはしない決まり）
 
