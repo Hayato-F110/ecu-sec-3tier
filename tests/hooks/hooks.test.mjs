@@ -31,6 +31,7 @@ import {
   reviewDecision,
 } from "../../.claude/hooks/review-before-pr.mjs";
 import { findWaitWithoutNext } from "../../.claude/hooks/wait-needs-next.mjs";
+import { findStepsWithoutSource } from "../../.claude/hooks/guard-cite-sources.mjs";
 
 const ROOT = "C:/work/repo";
 
@@ -289,5 +290,55 @@ describe("japanese-reply / plain-terms / wait-needs-next / review-before-pr", ()
     assert.equal(isCodeFile("backend/app/main.py"), true);
     assert.equal(isCodeFile("infra/main.tf"), true);
     assert.equal(isCodeFile("docs/handoff.md"), false);
+  });
+});
+
+describe("guard-cite-sources（外部サービスの画面の手順には公式の出典）", () => {
+  const AWS_STEPS =
+    "**手順**\n1. コンソールで「KMS」を開く\n2. 左のメニューの「カスタマー管理型のキー」を押す\n";
+  test("AWS の画面の手順に出典がなければ止める", () => {
+    assert.notEqual(findStepsWithoutSource(AWS_STEPS), null);
+  });
+  test("公式の資料の URL があれば通す", () => {
+    const ok = `${AWS_STEPS}出典：https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html\n`;
+    assert.equal(findStepsWithoutSource(ok), null);
+    const pricing = `${AWS_STEPS}出典：https://aws.amazon.com/kms/pricing/\n`;
+    assert.equal(findStepsWithoutSource(pricing), null);
+  });
+  test("公式でない URL（ブログ・まとめ）では通さない", () => {
+    const blog = `${AWS_STEPS}出典：https://example.com/aws-kms-howto\n`;
+    assert.notEqual(findStepsWithoutSource(blog), null);
+  });
+  test("GitHub・Atlassian の画面の手順にも公式の出典が要る", () => {
+    const gh = "1. GitHub のリポジトリの Settings を開く\n2. 左のメニューの「Branches」を押す\n";
+    assert.notEqual(findStepsWithoutSource(gh), null);
+    assert.equal(
+      findStepsWithoutSource(`${gh}出典：https://docs.github.com/ja/repositories\n`),
+      null,
+    );
+    const jira = "1. Jira のボードを開く\n2. 「スプリントを作成」を押す\n";
+    assert.notEqual(findStepsWithoutSource(jira), null);
+    assert.equal(
+      findStepsWithoutSource(`${jira}出典：https://support.atlassian.com/jira-software-cloud/\n`),
+      null,
+    );
+  });
+  test("2026-11-22 に記憶で書いた Tag Editor の手順を止める（再発の防止）", () => {
+    const actual =
+      "1. 上の検索欄に「Tag Editor」と入れ、「Resource Groups & Tag Editor」を開く\n" +
+      "2. 左のメニューの「タグエディタ」（Tag Editor）を押す\n" +
+      "3. 検索の条件を次のようにする\n4. 「リソースを検索」を押す\n";
+    assert.notEqual(findStepsWithoutSource(actual), null);
+    const arrows = "「Resource Groups & Tag Editor」→「Tag Editor」で、リージョンに「All regions」";
+    assert.equal(findStepsWithoutSource(arrows), null); // 矢印1つだけなら手順とはみなさない
+    assert.notEqual(findStepsWithoutSource(`「請求とコスト管理」→「請求書」→「サービス別の料金」`), null);
+  });
+  test("画面の操作の手順でなければ止めない", () => {
+    assert.equal(findStepsWithoutSource("AWS の請求は今月 0 ドルでした。"), null);
+    assert.equal(findStepsWithoutSource("1. テストを書く\n2. 実装する\n3. PR を出す"), null);
+    assert.equal(findStepsWithoutSource("Jira の SC3-8 を完了にしました。"), null);
+  });
+  test("コードブロックの中の言葉は見ない", () => {
+    assert.equal(findStepsWithoutSource("```\n1. AWS のコンソールを開く\n2. 押す\n```"), null);
   });
 });
