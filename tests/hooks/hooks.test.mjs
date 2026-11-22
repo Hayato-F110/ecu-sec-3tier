@@ -333,6 +333,28 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     assert.equal(findStepsWithoutSource(arrows), null); // 矢印1つだけなら手順とはみなさない
     assert.notEqual(findStepsWithoutSource(`「請求とコスト管理」→「請求書」→「サービス別の料金」`), null);
   });
+  test("（レビュー1回目）「を開いて」「を選んで」の形と、空白のない「・」の箇条書きも手順とみなす", () => {
+    const te = "1. AWS のコンソールを開いて「Billing」に入る\n2. 「請求書」を選んで中身を見る\n";
+    assert.notEqual(findStepsWithoutSource(te), null);
+    const dot = "・AWS のコンソールで「KMS」を開く\n・左のメニューの「キー」を押す\n";
+    assert.notEqual(findStepsWithoutSource(dot), null);
+  });
+  test("（レビュー1回目）Lambda など、AWS と書かないサービスの手順も見る", () => {
+    const lambda = "1. 「Lambda」の画面で「関数」を選び\n2. 「設定」タブに切り替える\n";
+    assert.notEqual(findStepsWithoutSource(lambda), null);
+  });
+  test("（レビュー1回目）状態の流れの矢印と、決めてほしいことの一覧は止めない", () => {
+    const flow = "Jira の SC3-9 で作ります。状態は「下書き」→「申請中」→「承認済み」と進みます。";
+    assert.equal(findStepsWithoutSource(flow), null);
+    const decision = "決めてほしいこと（GitHub の PR #6）\n1. A 案を選ぶ\n2. B 案を選ぶ\nおすすめ：A。";
+    assert.equal(findStepsWithoutSource(decision), null);
+  });
+  test("（レビュー1回目）末尾に「/」のない公式の URL も出典とみなす。コードの中の URL は出典にしない", () => {
+    assert.equal(findStepsWithoutSource(`${AWS_STEPS}出典：https://docs.aws.amazon.com\n`), null);
+    assert.equal(findStepsWithoutSource(`${AWS_STEPS}（https://docs.aws.amazon.com）\n`), null);
+    const inCode = `${AWS_STEPS}\`\`\`\nhttps://docs.aws.amazon.com/kms/\n\`\`\`\n`;
+    assert.notEqual(findStepsWithoutSource(inCode), null);
+  });
   test("画面の操作の手順でなければ止めない", () => {
     assert.equal(findStepsWithoutSource("AWS の請求は今月 0 ドルでした。"), null);
     assert.equal(findStepsWithoutSource("1. テストを書く\n2. 実装する\n3. PR を出す"), null);
