@@ -13,6 +13,9 @@ from sqlalchemy import URL, Connection, Engine, create_engine, text
 
 from app.config import get_settings
 
+# API のテストの準備（db_session・api）
+pytest_plugins = ["tests.api_helpers"]
+
 TEST_DB = "ecu_sec_test"
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 

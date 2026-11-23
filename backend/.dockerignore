@@ -1,0 +1,10 @@
+# コンテナに入れないもの。**/ を付けて、下のフォルダにも効かせる
+# .venv は手元の OS 用なので入れない（公式の手順）
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+tests
+# 秘密情報をイメージに入れない（backend/ に .env を置いてしまったときの守り）
+.env
+.env.*

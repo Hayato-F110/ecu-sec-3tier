@@ -1,5 +1,6 @@
 # ローカルの3層（画面・API・DB）を1コマンドで起動する（完了条件1）。
-# Day 1 は DB（保存の層）だけ。API（backend）は Day 3、画面（frontend ＋ nginx）は Day 4 に足す。
+# DB（保存の層）と API（処理の層、Day 3）。画面（frontend ＋ nginx）は Day 4 に足す。
+# API の説明と試しの画面：http://127.0.0.1:8000/docs
 # 使い方：env.example を .env に写して値を変え、docker compose up -d
 name: ecu-sec
 
@@ -25,6 +26,31 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  api:
+    # API（処理の層）。backend/Dockerfile から作る
+    build: ./backend
+    restart: unless-stopped
+    # 起動のたびに、テーブルを最新にし（Alembic）、ダミーデータを入れてから API を動かす。
+    # どちらも、済んでいれば何もしない。これで docker compose up -d だけで使える状態になる（完了条件1）
+    command: >-
+      sh -c "alembic upgrade head && python -m app.seed &&
+      uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?.env に POSTGRES_DB を書く}
+      POSTGRES_USER: ${POSTGRES_USER:?.env に POSTGRES_USER を書く}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env に POSTGRES_PASSWORD を書く}
+      # コンテナどうしは、サービスの名前（db）で相手を探す
+      POSTGRES_HOST: db
+      # 仮の本人確認（Day 6 まで）。既定は無効。/docs で試すときだけ .env で true にする
+      DEV_AUTH_ENABLED: ${DEV_AUTH_ENABLED:-false}
+    ports:
+      # 手元の PC からだけ接続できるように 127.0.0.1 に限る
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      # DB が接続を受け付けられるようになってから起動する
+      db:
+        condition: service_healthy
 
 volumes:
   db-data:

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # docker compose は 127.0.0.1 で待ち受けているので、それに合わせる
     postgres_host: str = "127.0.0.1"
     postgres_port: int = 5432
+    # 仮の本人確認（ヘッダー X-Dev-User-Id）。Day 6 に JWT へ差し替えるまでの開発用。
+    # 既定は無効：AWS などへ、うっかり有効のまま出さない（無効ならすべての API が 401）
+    dev_auth_enabled: bool = False
 
     def database_url(self, database: str | None = None) -> URL:
         """接続先。database を渡すと、その DB（テスト用など）に向ける。"""
