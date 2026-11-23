@@ -54,11 +54,13 @@ class AssessmentOut(BaseModel):
 
 
 class EntryOut(BaseModel):
+    """対策項目ごとの入力。まだ入力のない項目は status・evidence が空（null）。"""
+
     item_id: int
     code: str
     title: str
-    status: str
-    evidence: str
+    status: str | None
+    evidence: str | None
     planned_date: date | None
 
 

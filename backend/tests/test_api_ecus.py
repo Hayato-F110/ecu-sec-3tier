@@ -443,6 +443,65 @@ def test_new_version_copies_newest_approved(api: Api) -> None:
     assert {v for k, v in new.items() if k != first} == {("not_applicable", "版2の値", None)}
 
 
+# ---- レビュー（2026-11-23）の指摘から足したテスト ----
+
+
+def test_partial_save_on_new_ecu_returns_all_items(api: Api) -> None:
+    """版のない ECU に一部だけ保存しても、取得では全項目が並び、未入力は空になる。"""
+    supplier = api.user(A_EDITOR).company_id
+    ecu = Ecu(supplier_id=supplier, name="新しい ECU", part_no="DMY-A998", vehicle_model="架空車")
+    api.session.add(ecu)
+    api.session.commit()
+    first = item_ids(api.session)[0]
+    body = {"entries": [{"item_id": first, "status": "done", "evidence": "1項目だけ"}]}
+
+    assert api.put(draft_url(ecu), body, A_EDITOR).status_code == 200
+
+    entries = api.get(assessment_url(ecu), A_EDITOR).json()["entries"]
+    assert [e["item_id"] for e in entries] == item_ids(api.session)
+    assert (entries[0]["status"], entries[0]["evidence"]) == ("done", "1項目だけ")
+    assert {(e["status"], e["evidence"]) for e in entries[1:]} == {(None, None)}
+
+
+@pytest.mark.parametrize("case", ["unknown_status", "empty_entries", "no_entries_key", "bad_date"])
+def test_other_company_with_bad_body_is_404_same_as_missing(api: Api, case: str) -> None:
+    """本文の形の検査（422）より先に 404 を返す。他社の ECU の有無を 422 との差で漏らさない。"""
+    before = snapshot(api.session)
+    body = bad_bodies(api.session)[case]
+    other = api.put(draft_url(api.ecu(DRAFT)), body, B_EDITOR)
+    missing = api.put(draft_url(NO_SUCH_ECU), body, B_EDITOR)
+    assert (other.status_code, other.json()) == (404, missing.json())
+    assert missing.status_code == 404
+    assert snapshot(api.session) == before
+
+
+def test_unparseable_json_is_same_422_for_any_ecu(api: Api) -> None:
+    """JSON として読めない本文は、FastAPI が本人確認より前に 422 にする。ECU の有無は漏れない。"""
+    headers = api.headers(B_EDITOR) | {"Content-Type": "application/json"}
+    other = api.client.put(draft_url(api.ecu(DRAFT)), content="{", headers=headers)
+    missing = api.client.put(draft_url(NO_SUCH_ECU), content="{", headers=headers)
+    assert other.status_code == 422
+    assert (other.status_code, other.json()) == (missing.status_code, missing.json())
+
+
+def test_db_conflict_while_creating_version_is_409(
+    api: Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """版を作る途中で DB の制約に反したら（同時の保存など）、500 ではなく 409。"""
+    from sqlalchemy.exc import IntegrityError
+
+    import app.api.ecus as ecus_api
+
+    def conflict(*_args: object, **_kwargs: object) -> None:
+        raise IntegrityError("INSERT", {}, Exception("uq_assessments_one_open_per_ecu"))
+
+    monkeypatch.setattr(ecus_api, "new_version", conflict)
+    before = snapshot(api.session)
+    res = api.put(draft_url(api.ecu(APPROVED_ONLY)), full_body(api.session), A_EDITOR)
+    assert res.status_code == 409
+    assert snapshot(api.session) == before
+
+
 # ---- #18 一覧：サプライヤのどの役割でも自社の ECU だけ ----
 
 

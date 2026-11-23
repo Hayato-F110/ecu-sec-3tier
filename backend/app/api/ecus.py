@@ -10,7 +10,7 @@ import ipaddress
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -54,10 +54,16 @@ def latest_approved(db: Session, ecu_id: int) -> Assessment | None:
 def view_of(db: Session, assessment: Assessment | None) -> AssessmentView:
     if assessment is None:
         return AssessmentView(assessment=None, entries=[])
+    # 対策項目を起点にする：まだ入力のない項目も、空のまま並べて返す（画面が全項目を出せるように）
     rows = db.execute(
-        select(AssessmentEntry, MeasureItem)
-        .join(MeasureItem, MeasureItem.id == AssessmentEntry.item_id)
-        .where(AssessmentEntry.assessment_id == assessment.id)
+        select(MeasureItem, AssessmentEntry)
+        .outerjoin(
+            AssessmentEntry,
+            and_(
+                AssessmentEntry.item_id == MeasureItem.id,
+                AssessmentEntry.assessment_id == assessment.id,
+            ),
+        )
         .order_by(MeasureItem.sort_order)
     ).all()
     return AssessmentView(
@@ -66,14 +72,14 @@ def view_of(db: Session, assessment: Assessment | None) -> AssessmentView:
         ),
         entries=[
             EntryOut(
-                item_id=e.item_id,
+                item_id=m.id,
                 code=m.code,
                 title=m.title,
-                status=e.status,
-                evidence=e.evidence,
-                planned_date=e.planned_date,
+                status=e.status if e else None,
+                evidence=e.evidence if e else None,
+                planned_date=e.planned_date if e else None,
             )
-            for e, m in rows
+            for m, e in rows
         ],
     )
 
@@ -98,12 +104,20 @@ def list_ecus(user: SupplierUser, db: Db) -> list[EcuSummary]:
     ecus = db.scalars(
         select(Ecu).where(Ecu.supplier_id == user.company_id).order_by(Ecu.part_no)
     ).all()
+    # ECU ごとに、番号のいちばん大きい版だけを読む（版が増えても読む行は ECU の数だけ）
+    newest = (
+        select(Assessment.ecu_id, func.max(Assessment.version).label("version"))
+        .where(Assessment.ecu_id.in_([e.id for e in ecus]))
+        .group_by(Assessment.ecu_id)
+        .subquery()
+    )
     latest = {
         a.ecu_id: a
         for a in db.scalars(
-            select(Assessment)
-            .where(Assessment.ecu_id.in_([e.id for e in ecus]))
-            .order_by(Assessment.ecu_id, Assessment.version)
+            select(Assessment).join(
+                newest,
+                and_(Assessment.ecu_id == newest.c.ecu_id, Assessment.version == newest.c.version),
+            )
         )
     }
     return [
@@ -148,13 +162,34 @@ def save_draft(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"存在しない対策項目：{unknown}"
         )
 
+    # 版を作る・書き込む・確定するまでの全体で、DB の制約の違反（同時の保存など）を 409 にする
+    try:
+        draft = write_draft(db, ecu.id, current, body, user, client_ip(request))
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="ほかの保存と重なりました。やり直してください"
+        ) from exc
+    return view_of(db, draft)
+
+
+def write_draft(
+    db: Session,
+    ecu_id: int,
+    current: Assessment | None,
+    body: DraftIn,
+    user: User,
+    ip: str | None,
+) -> Assessment:
+    """下書きの版を決めて入力を書き、監査ログを足す（確定はしない）。"""
     if current is not None and current.status == "draft":
         draft, action = current, "save_draft"
     elif current is not None:  # 差し戻し → 下書きに戻す（理由と申請者の記録は残す）
         current.status = "draft"
         draft, action = current, "reopen_rejected"
     else:
-        draft = new_version(db, ecu.id)
+        draft = new_version(db, ecu_id)
         action = "create_draft_version"
 
     existing = {
@@ -172,23 +207,8 @@ def save_draft(
         row.evidence = entry.evidence
         row.planned_date = entry.planned_date
 
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            action=action,
-            target=f"assessment:{draft.id}",
-            ip=client_ip(request),
-        )
-    )
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        # ほかの保存と同時になり、作業中の版が2つになりかけたときなど
-        db.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, detail="ほかの保存と重なりました。やり直してください"
-        ) from exc
-    return view_of(db, draft)
+    db.add(AuditLog(user_id=user.id, action=action, target=f"assessment:{draft.id}", ip=ip))
+    return draft
 
 
 def new_version(db: Session, ecu_id: int) -> Assessment:

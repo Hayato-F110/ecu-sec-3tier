@@ -56,6 +56,27 @@ def test_disabled_dev_auth_rejects_valid_header(
     assert call(api, method, path, headers).status_code == 401
 
 
+def test_enabled_dev_auth_warns_at_startup(caplog: pytest.LogCaptureFixture) -> None:
+    """有効のまま出してしまったときに気づけるよう、起動時に警告を出す。"""
+    from app.config import get_settings
+    from app.main import create_app
+
+    settings = get_settings().model_copy(update={"dev_auth_enabled": True})
+    with caplog.at_level("WARNING"):
+        create_app(settings)
+    assert any("X-Dev-User-Id" in r.getMessage() for r in caplog.records)
+
+
+def test_disabled_dev_auth_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    from app.config import get_settings
+    from app.main import create_app
+
+    settings = get_settings().model_copy(update={"dev_auth_enabled": False})
+    with caplog.at_level("WARNING"):
+        create_app(settings)
+    assert not any("X-Dev-User-Id" in r.getMessage() for r in caplog.records)
+
+
 def test_dev_auth_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """設定を何も書かなければ無効（AWS などに、うっかり有効のまま出さない）。"""
     from app.config import Settings
