@@ -434,6 +434,47 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     );
     assert.equal(findStepsWithoutSource("- AWS の料金表（タブ区切り。予算 → IAM → CLI の順）を見る\n"), null);
   });
+  // ---- レビュー2回目の指摘（直しを戻すと落ちる） ----
+  test("（誤止め・2回目-1）かっこの中でも、画面の名前のある場所は止める", () => {
+    const parens =
+      "1. 予算を作る（AWS コンソールの Billing → Budgets → Create budget）\n" +
+      "2. IAM ユーザーを作る（IAM → Users → Create user）\n";
+    assert.notEqual(findStepsWithoutSource(parens), null);
+    assert.notEqual(findStepsWithoutSource("1. 名前を入力する（IAM → Users → Create user）\n"), null);
+  });
+  test("（誤止め・2回目-2）丁寧な形「をお選びください」「をお押しください」も操作とみなす", () => {
+    const polite =
+      "1. AWS コンソールの右上のリージョンのメニューで「東京」をお選びください\n" +
+      "2. 「作成」ボタンをお押しください\n";
+    assert.notEqual(findStepsWithoutSource(polite), null);
+  });
+  test("（誤止め・2回目-3）入れ子のかっこ・半角のかっこの中の項目の並びも止めない", () => {
+    const nested =
+      "1. **AWS の準備の手順**をお渡しします（予算 → IAM ユーザー（AWS の利用者アカウント）と MFA → アクセスキー → CLI）。\n" +
+      "2. Hook を直す\n";
+    assert.equal(findStepsWithoutSource(nested), null);
+    const half = "1. AWS の準備の手順をお渡しします(予算 → IAM ユーザーと MFA → アクセスキー → CLI)。\n2. Hook を直す\n";
+    assert.equal(findStepsWithoutSource(half), null);
+  });
+  test("（誤止め・2回目-3b）かっこの中のサービスの名前（Secrets Manager）は、画面の名前の手がかりにしない", () => {
+    // 2026-11-22 の実際の文章
+    const actual =
+      "AWS の作業（リージョンを東京にする → Secrets Manager の消し残しの確認 → 予算 → IAM ユーザー → MFA → アクセスキー → CLI）が済んだら、教えてください。\n";
+    assert.equal(findStepsWithoutSource(actual), null);
+  });
+  test("（誤止め・2回目-4）「」で囲んだ項目の並びも、かっこの中なら同じ決まり", () => {
+    assert.equal(findStepsWithoutSource("1. AWS の準備を進めます（「予算」→「IAM ユーザー」→「アクセスキー」）\n"), null);
+  });
+  test("（誤止め・2回目-5）「を開けます」「で開けます」（開ける・開けられる）は操作とみなさない", () => {
+    const can = "- このページは AWS コンソールの画面でオーナーだけがこのページを開けます\n- Chrome で開けます\n";
+    assert.equal(findStepsWithoutSource(can), null);
+  });
+  test("（誤止め・2回目-6）「を」「から」「で」のそれぞれを操作とみなす", () => {
+    const second = "2. AWS コンソールで「作成」を押す\n";
+    assert.notEqual(findStepsWithoutSource(`1. メニューから選ぶ\n${second}`), null);
+    assert.notEqual(findStepsWithoutSource(`1. 「作成」ボタンで押す\n${second}`), null);
+    assert.notEqual(findStepsWithoutSource(`1. 一覧の「東京」を選ぶ\n${second}`), null);
+  });
   test("（誤止め 2026-11-23）直しても、操作の言葉のある矢印の手順は止める", () => {
     assert.notEqual(findStepsWithoutSource("1. AWS で IAM → Users → Create user を押す\n"), null);
     assert.notEqual(findStepsWithoutSource("AWS コンソールで Billing → Budgets → Create budget を開く。"), null);
