@@ -396,6 +396,28 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
   test("（2回目-8）操作が1つだけの行は、1つと数える", () => {
     assert.equal(findStepsWithoutSource("1. 「KMS」→「キー」を開く (AWS)"), null);
   });
+  // ---- 2026-11-23 に実際に誤って止めた文章（会話の記録から取り出した） ----
+  test("（誤止め 2026-11-23-1）「を」のない「開く」「開けます」は操作とみなさない", () => {
+    const actual =
+      "- PowerPoint の形で取り出すときは、ページの「共有 › 書き出し」から .pptx にできます。" +
+      "日本語の書体（Noto Sans JP）は .pptx には入らないため、開く PC の書体に置き換わります\n" +
+      "- このページは今はご本人だけが開けます。ほかの人に見せるときは、ページの共有メニューで共有してください\n" +
+      "（AWS は使っていません）\n";
+    assert.equal(findStepsWithoutSource(actual), null);
+  });
+  test("（誤止め 2026-11-23-2）操作の言葉のない行の矢印（項目の並び）は手順とみなさない", () => {
+    const actual =
+      "## 次にやること\n\n" +
+      "1. **AWS の準備の手順**を、公式の資料で確かめて出典つきでお渡しします" +
+      "（予算 → IAM ユーザー〔AWS の利用者アカウント〕と MFA → アクセスキー → CLI）。" +
+      "お渡ししたあとの画面での操作は、オーナーの作業です\n" +
+      "2. Hook の誤った止め方を直す\n";
+    assert.equal(findStepsWithoutSource(actual), null);
+  });
+  test("（誤止め 2026-11-23）直しても、操作の言葉のある矢印の手順は止める", () => {
+    assert.notEqual(findStepsWithoutSource("1. AWS で IAM → Users → Create user を押す\n"), null);
+    assert.notEqual(findStepsWithoutSource("AWS コンソールで Billing → Budgets → Create budget を開く。"), null);
+  });
   test("画面の操作の手順でなければ止めない", () => {
     assert.equal(findStepsWithoutSource("AWS の請求は今月 0 ドルでした。"), null);
     assert.equal(findStepsWithoutSource("1. テストを書く\n2. 実装する\n3. PR を出す"), null);
