@@ -414,6 +414,26 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
       "2. Hook の誤った止め方を直す\n";
     assert.equal(findStepsWithoutSource(actual), null);
   });
+  test("（誤止め 2026-11-23・レビュー1回目）操作の言葉のない画面の場所（表・別の行・かっこの外）は止める", () => {
+    const table =
+      "| 作業 | 画面の場所 |\n|---|---|\n| 予算 | Billing → Budgets → Create budget |\n" +
+      "| ユーザー | IAM → Users → Create user |\n";
+    assert.notEqual(findStepsWithoutSource(table), null);
+    const nextLine = "AWS コンソールで次の場所へ：\nBilling → Budgets → Create budget\nそこで「作成」を押す\n";
+    assert.notEqual(findStepsWithoutSource(nextLine), null);
+    assert.notEqual(findStepsWithoutSource("場所：AWS コンソール → IAM → ユーザー\n"), null);
+  });
+  test("（誤止め 2026-11-23・レビュー1回目）「から選ぶ」「から開く」「で押す」も操作とみなす", () => {
+    const steps = "1. AWS コンソールの右上のリージョンのメニューから選ぶ\n2. 一覧から開く\n3. 「作成」ボタンで押す\n";
+    assert.notEqual(findStepsWithoutSource(steps), null);
+  });
+  test("（誤止め 2026-11-23・レビュー1回目）かっこの中の項目の並びは、「手に入れる」「タブ区切り」があっても止めない", () => {
+    assert.equal(
+      findStepsWithoutSource("1. AWS の準備（予算 → IAM ユーザーと MFA を手に入れる → アクセスキー → CLI）を進める\n"),
+      null,
+    );
+    assert.equal(findStepsWithoutSource("- AWS の料金表（タブ区切り。予算 → IAM → CLI の順）を見る\n"), null);
+  });
   test("（誤止め 2026-11-23）直しても、操作の言葉のある矢印の手順は止める", () => {
     assert.notEqual(findStepsWithoutSource("1. AWS で IAM → Users → Create user を押す\n"), null);
     assert.notEqual(findStepsWithoutSource("AWS コンソールで Billing → Budgets → Create budget を開く。"), null);
