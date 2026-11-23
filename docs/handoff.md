@@ -13,6 +13,14 @@
   - 手元の `/docs` と同じ API で、日本語の根拠を保存して取得できること、他社の ECU は 404 になることを確かめた
 - 初学者向けの学習マニュアル（34枚のスライド）を作った：<https://claude.ai/artifact/YRYHcnsstw3GfbUk4ZmZbC>（非公開）
 
+## 作業中（2026-11-23 18:50、使用量 95% で中断）
+
+- SC3-10（Day 4、スプリント2）を先に着手。Jira は進行中・開始日 11/23。ブランチ `feature/SC3-10-frontend`（WIP コミット済み、未 push）
+- 設計案はオーナー承認済み：`C:\Users\hayat\.claude\plans\goofy-wobbling-church-of-fff166cd-2acc-4825-9153-99ff9be02539.md`
+- 済み：`frontend/` の雛形・API を呼ぶ関数・一覧と入力画面・nginx.conf・Dockerfile・compose の web（127.0.0.1:8080）。テスト 21件は空の実装で赤 → 実装で緑（21 passed）
+- 残り：① 型の直し（`vi.fn<typeof fetch>`）のあとに `npm test`・`npm run lint`・`npm run build` を流し直す ② `docker compose build web`（ビルドの結果は `tmp/web-build.txt`）→ `up -d` でブラウザ確認（`.env` の `DEV_AUTH_ENABLED=true` はオーナーの作業）③ `/code-review` 1回・security-reviewer ④ PR
+- バックログ SC3-25〜28 はオーナーがスプリントに入れた（26→2、25→3、27・28→4）
+
 ## 次にやること
 
 1. AWS の準備：手順は 2026-11-23 に公式の資料で確かめて出典つきでオーナーに渡した。IAM ユーザーの作成の画面の手順だけは資料になく確かめられなかった（「新しい画面ではコンソールにサインインできる IAM ユーザーを作れない」という注意がある）。オーナーの作業を待つ

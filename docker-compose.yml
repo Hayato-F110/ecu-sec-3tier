@@ -1,6 +1,6 @@
 # ローカルの3層（画面・API・DB）を1コマンドで起動する（完了条件1）。
-# DB（保存の層）と API（処理の層、Day 3）。画面（frontend ＋ nginx）は Day 4 に足す。
-# API の説明と試しの画面：http://127.0.0.1:8000/docs
+# DB（保存の層）、API（処理の層、Day 3）、画面（表示の層、frontend ＋ nginx、Day 4）。
+# 画面：http://127.0.0.1:8080　API の説明と試しの画面：http://127.0.0.1:8000/docs
 # 使い方：env.example を .env に写して値を変え、docker compose up -d
 name: ecu-sec
 
@@ -51,6 +51,18 @@ services:
       # DB が接続を受け付けられるようになってから起動する
       db:
         condition: service_healthy
+
+  web:
+    # 画面（表示の層）。frontend/Dockerfile で画面をビルドし、nginx で配る。
+    # nginx が /api/ を API へ中継するので、画面と API は同じオリジンになる（frontend/nginx.conf）
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      # 手元の PC からだけ接続できるように 127.0.0.1 に限る。ブラウザで http://127.0.0.1:8080
+      - "127.0.0.1:8080:80"
+    depends_on:
+      # API のコンテナが作られてから起動する（中継先の名前 api が見つかるように）
+      - api
 
 volumes:
   db-data:
