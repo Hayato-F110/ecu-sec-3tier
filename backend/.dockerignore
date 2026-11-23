@@ -1,0 +1,7 @@
+# コンテナに入れないもの
+# .venv は手元の OS 用なので入れない（公式の手順）
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+tests
