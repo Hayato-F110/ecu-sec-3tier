@@ -1,10 +1,11 @@
-"""ECU の一覧・取得・下書き保存の API のテスト（docs/test-plans/SC3-9.md の #1〜#12）。
+"""ECU の一覧・取得・下書き保存の API のテスト（docs/test-plans/SC3-9.md の #1〜#12・#14〜#18）。
 
 ダミーデータ（app/seed.py）の ECU は、会社ごとに番号順で次の版を持つ：
   DMY-x001：承認済みだけ / DMY-x002：承認済み＋承認待ち / DMY-x003：承認済み＋差し戻し /
   DMY-x004：下書きだけ（x は会社の記号 A〜D）
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -18,6 +19,8 @@ A_EDITOR = "a-editor@example.com"
 A_APPROVER = "a-approver@example.com"
 A_ADMIN = "a-supplier_admin@example.com"
 B_EDITOR = "b-editor@example.com"
+B_APPROVER = "b-approver@example.com"
+B_ADMIN = "b-supplier_admin@example.com"
 OEM_ADMIN = "oem-sys_admin@example.com"
 OEM_REVIEWER = "oem-reviewer@example.com"
 
@@ -329,3 +332,125 @@ def test_evidence_of_exactly_2000_chars_is_ok(api: Api) -> None:
     first = item_ids(api.session)[0]
     body = {"entries": [{"item_id": first, "status": "done", "evidence": "あ" * 2000}]}
     assert api.put(draft_url(api.ecu(DRAFT)), body, A_EDITOR).status_code == 200
+
+
+# ---- #14 他社のどの役割でも、どの状態の ECU でも 404 ----
+
+
+@pytest.mark.parametrize("email", [B_EDITOR, B_APPROVER, B_ADMIN])
+@pytest.mark.parametrize("part_no", [APPROVED_ONLY, PENDING, REJECTED, DRAFT])
+def test_other_company_any_role_any_state_is_404(api: Api, email: str, part_no: str) -> None:
+    """役割の 403 や状態の 409 より先に 404 を返し、他社の ECU の有無も状態も漏らさない。"""
+    ecu = api.ecu(part_no)
+    before = snapshot(api.session)
+
+    got = api.get(assessment_url(ecu), email)
+    got_missing = api.get(assessment_url(NO_SUCH_ECU), email)
+    saved = api.put(draft_url(ecu), full_body(api.session), email)
+    saved_missing = api.put(draft_url(NO_SUCH_ECU), full_body(api.session), email)
+
+    assert (got.status_code, got.json()) == (404, got_missing.json())
+    assert got_missing.status_code == 404
+    assert (saved.status_code, saved.json()) == (404, saved_missing.json())
+    assert saved_missing.status_code == 404
+    assert snapshot(api.session) == before
+
+
+# ---- #15 監査ログの中身 ----
+
+
+def last_log(s: Session) -> AuditLog:
+    s.expire_all()
+    return s.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(1)).one()
+
+
+@pytest.mark.parametrize(
+    ("part_no", "action"),
+    [
+        (APPROVED_ONLY, "create_draft_version"),
+        (DRAFT, "save_draft"),
+        (REJECTED, "reopen_rejected"),
+    ],
+)
+def test_save_audit_log_records_who_what_and_target(api: Api, part_no: str, action: str) -> None:
+    ecu = api.ecu(part_no)
+    logs_before = snapshot(api.session)[2]
+
+    assert api.put(draft_url(ecu), full_body(api.session), A_EDITOR).status_code == 200
+
+    saved = versions(api.session, ecu)[-1]
+    log = last_log(api.session)
+    assert snapshot(api.session)[2] == logs_before + 1
+    assert (log.user_id, log.action, log.target) == (
+        api.user(A_EDITOR).id,
+        action,
+        f"assessment:{saved.id}",
+    )
+    # TestClient の接続元は "testclient"（IP アドレスではない）ので、ip は空にする
+    assert log.ip is None
+
+
+# ---- #16 承認済みだけの ECU に2回続けて保存 ----
+
+
+def test_second_save_on_approved_rewrites_version_2(api: Api) -> None:
+    ecu = api.ecu(APPROVED_ONLY)
+    first = api.put(draft_url(ecu), full_body(api.session, "in_progress", "1回目"), A_EDITOR)
+    second = api.put(draft_url(ecu), full_body(api.session, "done", "2回目"), A_EDITOR)
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    v1, v2 = versions(api.session, ecu)
+    assert [(a.version, a.status) for a in (v1, v2)] == [(1, "approved"), (2, "draft")]
+    assert {e[1:] for e in entries_of(api.session, v2)} == {("done", "2回目", None)}
+    assert second.json()["assessment"]["version"] == 2
+
+
+# ---- #17 承認済みの版が2つあれば、新しいほうを写す ----
+
+
+def test_new_version_copies_newest_approved(api: Api) -> None:
+    ecu = api.ecu(APPROVED_ONLY)
+    editor, approver = api.user(A_EDITOR), api.user(A_APPROVER)
+    now = datetime.now(UTC)
+    v2 = Assessment(
+        ecu_id=ecu.id,
+        version=2,
+        status="approved",
+        submitted_by=editor.id,
+        submitted_at=now,
+        approved_by=approver.id,
+        approved_at=now,
+        review_status="unreviewed",
+    )
+    api.session.add(v2)
+    api.session.flush()
+    for item_id in item_ids(api.session):
+        api.session.add(
+            AssessmentEntry(
+                assessment_id=v2.id, item_id=item_id, status="not_applicable", evidence="版2の値"
+            )
+        )
+    api.session.commit()
+    first = item_ids(api.session)[0]
+    body = {"entries": [{"item_id": first, "status": "done", "evidence": "送った値"}]}
+
+    assert api.put(draft_url(ecu), body, A_EDITOR).status_code == 200
+
+    vs = versions(api.session, ecu)
+    assert [(a.version, a.status) for a in vs] == [(1, "approved"), (2, "approved"), (3, "draft")]
+    new = {e[0]: e[1:] for e in entries_of(api.session, vs[2])}
+    assert new[first] == ("done", "送った値", None)
+    assert {v for k, v in new.items() if k != first} == {("not_applicable", "版2の値", None)}
+
+
+# ---- #18 一覧：サプライヤのどの役割でも自社の ECU だけ ----
+
+
+@pytest.mark.parametrize("email", [A_EDITOR, A_APPROVER, A_ADMIN])
+def test_list_every_supplier_role_sees_only_own(api: Api, email: str) -> None:
+    res = api.get("/api/ecus", email)
+    assert res.status_code == 200
+    own = set(
+        api.session.scalars(select(Ecu.id).where(Ecu.supplier_id == api.user(email).company_id))
+    )
+    assert {e["id"] for e in res.json()} == own
