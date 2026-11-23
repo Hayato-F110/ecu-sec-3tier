@@ -31,6 +31,11 @@ services:
     # API（処理の層）。backend/Dockerfile から作る
     build: ./backend
     restart: unless-stopped
+    # 起動のたびに、テーブルを最新にし（Alembic）、ダミーデータを入れてから API を動かす。
+    # どちらも、済んでいれば何もしない。これで docker compose up -d だけで使える状態になる（完了条件1）
+    command: >-
+      sh -c "alembic upgrade head && python -m app.seed &&
+      uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?.env に POSTGRES_DB を書く}
       POSTGRES_USER: ${POSTGRES_USER:?.env に POSTGRES_USER を書く}

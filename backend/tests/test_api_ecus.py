@@ -297,6 +297,8 @@ def bad_bodies(s: Session) -> dict[str, Any]:
         "empty_entries": {"entries": []},
         "no_entries_key": {},
         "bad_date": one(status="in_progress", planned_date="2027-13-40"),
+        # PostgreSQL の text は NUL 文字を保存できない（入口で断らないと 500 になる）
+        "nul_in_evidence": one(evidence="前\x00後"),
         "second_ok_first_bad": {
             "entries": [
                 {"item_id": second, "status": "done", "evidence": "正しい"},
@@ -319,6 +321,7 @@ def bad_bodies(s: Session) -> dict[str, Any]:
         "no_entries_key",
         "bad_date",
         "second_ok_first_bad",
+        "nul_in_evidence",
     ],
 )
 def test_invalid_body_is_422_and_changes_nothing(api: Api, case: str) -> None:
@@ -498,6 +501,65 @@ def test_db_conflict_while_creating_version_is_409(
     monkeypatch.setattr(ecus_api, "new_version", conflict)
     before = snapshot(api.session)
     res = api.put(draft_url(api.ecu(APPROVED_ONLY)), full_body(api.session), A_EDITOR)
+    assert res.status_code == 409
+    assert snapshot(api.session) == before
+
+
+# ---- レビュー2回目（2026-11-23）の指摘から足したテスト ----
+
+
+def test_lone_surrogate_in_evidence_is_422(api: Api) -> None:
+    """片割れのサロゲート（文字として不完全な値）も、500 ではなく 422。"""
+    first = item_ids(api.session)[0]
+    # JSON の中の \ud800 という書き方（Python の文字列では \\ud800）で送る
+    raw = '{"entries":[{"item_id":' + str(first) + ',"status":"done","evidence":"\\ud800"}]}'
+    before = snapshot(api.session)
+    headers = api.headers(A_EDITOR) | {"Content-Type": "application/json"}
+    res = api.client.put(draft_url(api.ecu(DRAFT)), content=raw, headers=headers)
+    assert res.status_code == 422
+    assert snapshot(api.session) == before
+
+
+def test_pending_with_unknown_item_is_422_before_409(api: Api) -> None:
+    """調べる順番：入力の誤り（422）を、状態（承認待ちの 409）より先に返す。"""
+    before = snapshot(api.session)
+    body = bad_bodies(api.session)["unknown_item"]
+    res = api.put(draft_url(api.ecu(PENDING)), body, A_EDITOR)
+    assert res.status_code == 422
+    assert snapshot(api.session) == before
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("192.0.2.10", "192.0.2.10"),
+        ("2001:db8::1", "2001:db8::1"),
+        ("fe80::1%eth0", "fe80::1"),
+        ("testclient", None),
+        (None, None),
+    ],
+)
+def test_client_ip_is_storable_in_inet(host: str | None, expected: str | None) -> None:
+    """PostgreSQL の INET に入る形だけを返す。ゾーン ID（%eth0）は除き、IP でなければ空。"""
+    from types import SimpleNamespace
+
+    from app.api.ecus import client_ip
+
+    request = SimpleNamespace(client=SimpleNamespace(host=host) if host else None)
+    assert client_ip(request) == expected  # type: ignore[arg-type]
+
+
+def test_commit_conflict_rolls_back_everything(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:
+    """確定（commit）で制約に反しても 409。差し戻しからの戻しも、入力も、監査ログも残らない。"""
+    from sqlalchemy.exc import IntegrityError
+
+    def conflict() -> None:
+        raise IntegrityError("COMMIT", {}, Exception("uq_assessments_one_open_per_ecu"))
+
+    before = snapshot(api.session)
+    monkeypatch.setattr(api.session, "commit", conflict)
+    res = api.put(draft_url(api.ecu(REJECTED)), full_body(api.session, "done", "x"), A_EDITOR)
+    monkeypatch.undo()
     assert res.status_code == 409
     assert snapshot(api.session) == before
 

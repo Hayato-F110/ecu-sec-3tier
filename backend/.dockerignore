@@ -5,3 +5,6 @@
 **/.pytest_cache
 **/.ruff_cache
 tests
+# 秘密情報をイメージに入れない（backend/ に .env を置いてしまったときの守り）
+.env
+.env.*

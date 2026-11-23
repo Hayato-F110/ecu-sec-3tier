@@ -3,10 +3,24 @@
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 EntryStatus = Literal["done", "in_progress", "not_done", "not_applicable"]
 EVIDENCE_MAX = 2000
+
+
+def storable_text(value: str) -> str:
+    """DB に保存でき、応答で返せる文字だけを許す。
+
+    PostgreSQL の text は NUL 文字を保存できず、片割れのサロゲートは UTF-8 にできない。
+    どちらも入口で断る（断らないと DB や応答の作成で 500 になる）。
+    """
+    if "\x00" in value or any(0xD800 <= ord(c) <= 0xDFFF for c in value):
+        raise ValueError("使えない文字が含まれています")
+    return value
+
+
+StorableText = Annotated[str, Field(max_length=EVIDENCE_MAX), AfterValidator(storable_text)]
 
 
 class EcuSummary(BaseModel):
@@ -24,7 +38,7 @@ class EntryIn(BaseModel):
 
     item_id: int
     status: EntryStatus
-    evidence: Annotated[str, Field(max_length=EVIDENCE_MAX)]
+    evidence: StorableText
     planned_date: date | None = None
 
     @model_validator(mode="after")

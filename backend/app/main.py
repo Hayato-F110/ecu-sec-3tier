@@ -6,7 +6,9 @@
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.api import ecus
 from app.config import Settings, get_settings
@@ -31,4 +33,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 接続はここでは開かない（最初の問い合わせのときに開く）
     app.state.session_factory = make_session_factory(make_engine(settings.database_url()))
     app.include_router(ecus.router)
+    app.add_exception_handler(RequestValidationError, validation_error)
     return app
+
+
+async def validation_error(_request: Request, exc: Exception) -> JSONResponse:
+    """入力の誤り（422）。送られた値（input）は応答に入れない。
+
+    既定の応答は送られた値をそのまま返すため、UTF-8 にできない値で 500 になる。
+    また、送られたものを返さないほうが、ほかの人の画面にそのまま出る心配もない。
+    """
+    if not isinstance(exc, RequestValidationError):  # 登録した型でしか呼ばれない
+        raise exc
+    errors = [{"type": e["type"], "loc": e["loc"], "msg": e["msg"]} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})

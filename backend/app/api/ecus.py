@@ -85,12 +85,15 @@ def view_of(db: Session, assessment: Assessment | None) -> AssessmentView:
 
 
 def client_ip(request: Request) -> str | None:
-    """接続元の IP アドレス。IP アドレスでないとき（テストの "testclient" など）は空にする。"""
+    """接続元の IP アドレス。IP アドレスでないとき（テストの "testclient" など）は空にする。
+
+    IPv6 のゾーン ID（fe80::1%eth0 の %eth0）は除く。PostgreSQL の INET が受け付けないため。
+    """
     host = request.client.host if request.client else None
     if host is None:
         return None
     try:
-        return str(ipaddress.ip_address(host))
+        return str(ipaddress.ip_address(host.split("%", 1)[0]))
     except ValueError:
         return None
 
@@ -151,16 +154,17 @@ def save_draft(
     # 同じ ECU への同時の保存を1つずつにする（版の番号の重複を防ぐ）
     db.execute(select(Ecu.id).where(Ecu.id == ecu.id).with_for_update())
 
-    current = open_version(db, ecu.id, lock=True)
-    if current is not None and current.status == "pending":
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="承認待ちの版は編集できません")
-
+    # 調べる順番：入力の誤り（422）→ 状態（409）。docs/test-plans/SC3-9.md
     known = set(db.scalars(select(MeasureItem.id)))
     unknown = sorted({e.item_id for e in body.entries} - known)
     if unknown:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"存在しない対策項目：{unknown}"
         )
+
+    current = open_version(db, ecu.id, lock=True)
+    if current is not None and current.status == "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="承認待ちの版は編集できません")
 
     # 版を作る・書き込む・確定するまでの全体で、DB の制約の違反（同時の保存など）を 409 にする
     try:
