@@ -480,6 +480,30 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     const jiraSteps = `${actual}\n1. Jira のボードを開く\n2. 「スプリントを作成」を押す\n`;
     assert.notEqual(findStepsWithoutSource(jiraSteps), null);
   });
+  // ---- SC3-31 のレビュー1回目の指摘（直しを戻すと落ちる） ----
+  test("（SC3-31 レビュー1-1）サービスの名前が箇条書きの見出しの項目にしかなくても、そのサービスの出典を求める", () => {
+    const gh = "- GitHub の設定で：\n- Settings タブを開く\n- 「Branches」を選ぶ\n";
+    assert.equal(findStepsWithoutSource(`${gh}出典：https://docs.github.com/ja/repositories\n`), null);
+    assert.notEqual(findStepsWithoutSource(`${gh}出典：https://docs.aws.amazon.com/\n`), null);
+  });
+  test("（SC3-31 レビュー1-2）表の見出しの行か、表の直前の行にだけサービスの名前がある手順の表も止める", () => {
+    const header = "| 手順 | GitHub での操作 |\n|---|---|\n| 1 | 「Settings」を開く |\n| 2 | 「Branches」を選ぶ |\n";
+    assert.notEqual(findStepsWithoutSource(header), null);
+    const intro = "GitHub のリポジトリで：\n| 1 | 「Settings」を開く |\n| 2 | 「Branches」を選ぶ |\n";
+    assert.notEqual(findStepsWithoutSource(intro), null);
+  });
+  test("（SC3-31 レビュー1-3）1列目の S3 は、S1・S2 のような番号が並ぶ表のときだけ番号とみなす", () => {
+    const s3 = "| S3 | 「Create bucket」を押す |\n| S3 | 「Permissions」を開く |\n";
+    assert.notEqual(findStepsWithoutSource(s3), null);
+  });
+  test("（SC3-31 レビュー1-4）「入力」は「を・に・へ入力」「」と入力」だけ。「出力と入力」は数えない", () => {
+    const noun = "- AWS の画面：出力と入力の欄を確かめる\n- IAM の入力できる欄を見る\n";
+    assert.equal(findStepsWithoutSource(noun), null);
+    const steps = "1. AWS コンソールの「名前」欄へ入力する\n2. 検索欄に「IAM」と入力する\n";
+    assert.notEqual(findStepsWithoutSource(steps), null);
+    // かっこの中の矢印も同じ決まり：「入力できる」では数えない
+    assert.equal(findStepsWithoutSource("1. AWS の準備（予算 → IAM → CLI）で入力できる欄を見る\n"), null);
+  });
   test("（SC3-31）表の行は、その行にサービスの名前か画面の部品があるときだけ、操作の言葉で手順とみなす", () => {
     // 行ごとに画面の手がかりがある表は、今までどおり止める
     const rows =
