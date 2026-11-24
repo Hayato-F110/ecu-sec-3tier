@@ -11,7 +11,7 @@
 
 ## 次にやること
 
-1. `node tmp/worktime.mjs 2026-11-24` で 11/24 の作業時間を出し、devlog と SC3-11 のコメントに書く
+1. 空のフォルダ `.claude/worktrees/day-docs` を片付ける（git からは外れている）
 2. test-plan-reviewer の報告を読み、テストの一覧を直す → 設計案をオーナーに出して承認をもらう（`/story`）
 3. SC3-11：テストを先に → 実装（`GET /api/matrix`、画面 `/matrix`）→ `/code-review`（データ分離に関わるので2回まで）・security-reviewer → PR
 4. SC3-11 の「見積もりの見直し」（Day 1〜5 の実際の時間から）
