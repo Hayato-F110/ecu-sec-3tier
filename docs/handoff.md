@@ -1,45 +1,31 @@
 # 引き継ぎ
 
-最終更新：2026-11-23 18:35（`/end-day`。5時間の使用量 95% で止めた）
+最終更新：2026-11-24 18:50（週の使用量 99% で止めた）
 
 ## いまの状態
 
-- スプリント1（11/22〜11/24、SC3-2・8・9）。Jira の終わりは 11/24 23:00（日本時間）
-- SC3-2（Day 1）：進行中。残りは AWS の準備（オーナーの作業）と `aws sts get-caller-identity` の確認
-- SC3-8・SC3-9：完了（PR #5・#7）
-- SC3-10（Day 4、スプリント2）：オーナーの指示で先に着手。Jira は進行中・開始日 11/23
-  - ブランチ `feature/SC3-10-frontend`（途中の作業をコミット済み `a5a1c0d`、**未 push**）
-  - 設計案（承認済み）：`C:\Users\hayat\.claude\plans\goofy-wobbling-church-of-fff166cd-2acc-4825-9153-99ff9be02539.md`
-  - 済み：`frontend/`（雛形、API を呼ぶ関数、ECU 一覧と入力画面、nginx.conf、Dockerfile）、compose の `web`（127.0.0.1:8080）。テスト 21件は赤 → 緑
-  - このブランチの `docs/handoff.md` の変更は古い。main と食い違うので、作業の再開時に `git checkout origin/main -- docs/handoff.md` で main に合わせる
-- 学習マニュアル（34枚）：<https://claude.ai/artifact/YRYHcnsstw3GfbUk4ZmZbC>（非公開）
+- スプリント1（SC3-2・8・9）：すべて完了。ふりかえり `docs/retro/sprint-1.md` と設計判断はオーナーの**承認待ち**
+- スプリント2（11/25〜11/27）：SC3-10・SC3-31 は完了（先に着手）。残りは SC3-11（進行中）・SC3-12（Day 6）・SC3-26・SC3-29
+- SC3-11（Day 5、進行中・開始日 11/24）：ブランチ `feature/SC3-11-matrix`（push 済み）。テストの一覧 `docs/test-plans/SC3-11.md` を書いた。test-plan-reviewer の結果は `.claude/agent-reports/` にある（未読）
+- CLI の認証は `aws login`（オーナーの決定）。Terraform がこの認証で動くかは、Day 12 の前に公式の資料で確かめる
 
-## 次にやること（Day 4 の続き）
+## 次にやること
 
-1. `feature/SC3-10-frontend` に戻り、`cd frontend && npm test`・`npm run lint`・`npm run build` を流す（テストのファイルの型を `vi.fn<typeof fetch>` に直したあと、まだ流していない）
-2. `docker compose up -d --build` → ブラウザで `http://127.0.0.1:8080`：A 社の入力者の ID で一覧 → 入力 → 保存 → 開き直す。他社の ECU の番号で「見つかりません」。`curl -I` で守りのヘッダー
-3. `/code-review` 1回・security-reviewer → PR → マージ
-4. AWS の準備が済めば SC3-2 を完了にする（証拠の表をコメントしてから）
-5. 11/24 はスプリント1の最終日：`/design-decisions` と `/retro`
-
-## バックログ（オーナーがスプリントに入れた）
-
-- SC3-26：nginx の後ろでも監査ログに本当の接続元の ip を残す（スプリント2）
-- SC3-25：差し戻しのあとの再申請で、申請者を必ず書き直す（スプリント3）
-- SC3-27：API 用の DB ユーザーを分ける・SC3-28：httpx2（スプリント4）
+1. 空のフォルダ `.claude/worktrees/day-docs` を片付ける（git からは外れている）
+2. test-plan-reviewer の報告を読み、テストの一覧を直す → 設計案をオーナーに出して承認をもらう（`/story`）
+3. SC3-11：テストを先に → 実装（`GET /api/matrix`、画面 `/matrix`）→ `/code-review`（データ分離に関わるので2回まで）・security-reviewer → PR
+4. SC3-11 の「見積もりの見直し」（Day 1〜5 の実際の時間から）
 
 ## オーナーにお願いすること
 
-1. AWS：ゼロ支出予算、練習用 IAM ユーザーと MFA、請求の画面の公開、CLI 用のアクセスキー、AWS CLI と `aws configure`（手順は 2026-11-23 に出典つきで渡した）
-2. 画面で試す前に、`.env` に `DEV_AUTH_ENABLED=true` を書く（試し終わったら false に戻す）
+1. ふりかえりと設計判断の承認（`docs/retro/sprint-1.md`・`docs/design-decisions.md` の「スプリント1」）
 
 ## つまずき防止のメモ
 
 - Docker Desktop が起動していないと、テストは DB に接続できず全部止まる
-- Git Bash の curl で日本語の本文を送ると 400 になる。日本語は Python（`tmp/save_ja.py`）か `/docs` から送る
 - 検査の出力はパイプにつながず、`tmp/` のファイルに書いてから読む（Hook が止める）
-- 画面のテスト：画面の片付けは `frontend/src/test-setup.ts` の `cleanup`（Vitest の globals を使わないため）
-- TypeScript は 6.0.3（7.0 は typescript-eslint が未対応。対応したら上げる）
-- 作業時間は `node tmp/worktime.mjs YYYY-MM-DD`（会話の記録から。tmp は Git の対象外）
-- PostgreSQL は 18。alembic.ini は ASCII だけ。接続先は `127.0.0.1`
-- Jira のポイントの欄は `customfield_10016`。欄と遷移の ID は `.claude/hooks/project.json`
+- Git Bash で `origin/main:パス` を使うときは `MSYS_NO_PATHCONV=1`（パスに書き換えられる）
+- `node -e` に正規表現のバックスラッシュを書くと Hook が止める。スクリプトは `tmp/` のファイルに
+- nginx のテスト：`node --test tests/web/`（3層が動いているときだけ）
+- Jira の開始日（customfield_10015）は遷移と一緒に設定できない。遷移のあと `editJiraIssue` で
+- 作業時間は `node tmp/worktime.mjs YYYY-MM-DD`
