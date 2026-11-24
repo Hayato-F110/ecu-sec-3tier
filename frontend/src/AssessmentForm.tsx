@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   type AssessmentView,
@@ -22,6 +22,8 @@ type Row = {
   item_id: number;
   title: string;
   status: EntryStatus | "";
+  /** 保存済みの状態がある。API は送らなかった項目を前の値のまま残すので、（未選択）に戻しても消えない */
+  saved: boolean;
   evidence: string;
   planned_date: string;
 };
@@ -31,6 +33,7 @@ const rowsOf = (view: AssessmentView): Row[] =>
     item_id: e.item_id,
     title: e.title,
     status: e.status ?? "",
+    saved: e.status !== null,
     evidence: e.evidence ?? "",
     planned_date: e.planned_date ?? "",
   }));
@@ -79,9 +82,19 @@ export const AssessmentForm = ({
   const [view, setView] = useState<AssessmentView | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [loadError, setLoadError] = useState<unknown>(null);
-  const [saveError, setSaveError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  // 保存の結果は「どのユーザー・ECU の保存か」と組で持ち、今の組と同じときだけ出す
+  const target = `${userId}:${ecuId}`;
+  const [savedFor, setSavedFor] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<{
+    target: string;
+    error: unknown;
+  } | null>(null);
+  // 保存の応答が届いたときの組。送ったときと違えば（途中でユーザー ID を変えた）、応答を捨てる
+  const currentTarget = useRef(target);
+  useEffect(() => {
+    currentTarget.current = target;
+  }, [target]);
 
   useEffect(() => {
     let active = true; // ECU・仮のユーザー ID を変えたとき、前の応答で上書きしない
@@ -107,7 +120,7 @@ export const AssessmentForm = ({
   if (view === null) return <p>読み込み中…</p>;
 
   const update = (itemId: number, change: Partial<Row>) => {
-    setSaved(false);
+    setSavedFor(null);
     setRows((current) =>
       current.map((r) => (r.item_id === itemId ? { ...r, ...change } : r)),
     );
@@ -117,16 +130,19 @@ export const AssessmentForm = ({
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    const sentFor = target;
     setSaving(true);
     setSaveError(null);
-    setSaved(false);
+    setSavedFor(null);
     try {
       const result = await saveDraft(userId, ecuId, entries);
+      if (currentTarget.current !== sentFor) return;
       setView(result);
       setRows(rowsOf(result));
-      setSaved(true);
+      setSavedFor(sentFor);
     } catch (e: unknown) {
-      setSaveError(e);
+      if (currentTarget.current !== sentFor) return;
+      setSaveError({ target: sentFor, error: e });
     } finally {
       setSaving(false);
     }
@@ -161,7 +177,9 @@ export const AssessmentForm = ({
                     })
                   }
                 >
-                  <option value="">（未選択）</option>
+                  <option value="" disabled={r.saved}>
+                    （未選択）
+                  </option>
                   {Object.entries(STATUS_LABELS).map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
@@ -198,8 +216,10 @@ export const AssessmentForm = ({
       <button type="submit" disabled={entries.length === 0 || saving}>
         下書きを保存
       </button>
-      {saved && <p role="status">保存しました</p>}
-      {saveError !== null && <ErrorMessage error={saveError} />}
+      {savedFor === target && <p role="status">保存しました</p>}
+      {saveError !== null && saveError.target === target && (
+        <ErrorMessage error={saveError.error} />
+      )}
     </form>
   );
 };

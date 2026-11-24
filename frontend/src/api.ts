@@ -51,11 +51,16 @@ export class ApiError extends Error {
   }
 }
 
-/** 422 の応答（{"detail": [{"msg": …}, …]}）から msg だけを取り出す。形が違えば空 */
+/** API の理由（detail）を画面に並べる状態コード。保存が重なった 409 と承認待ちの 409 のように、
+ *  同じ状態コードでも理由が違うため。401・403・404 は画面の決まった文言だけにする */
+const SHOW_DETAILS = new Set([409, 422]);
+
+/** 応答の理由を取り出す。{"detail": "文章"} はその文章、{"detail": [{"msg": …}, …]} は msg だけ。形が違えば空 */
 const detailsOf = (body: unknown): string[] => {
   if (typeof body !== "object" || body === null || !("detail" in body))
     return [];
   const { detail } = body;
+  if (typeof detail === "string") return [detail];
   if (!Array.isArray(detail)) return [];
   return detail.flatMap((d: unknown) =>
     typeof d === "object" &&
@@ -77,7 +82,11 @@ const request = async <T>(
   if (userId !== "") headers.set("X-Dev-User-Id", userId);
   const response = await fetch(path, { ...init, headers });
   const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(response.status, detailsOf(body));
+  if (!response.ok)
+    throw new ApiError(
+      response.status,
+      SHOW_DETAILS.has(response.status) ? detailsOf(body) : [],
+    );
   return body as T;
 };
 
@@ -106,7 +115,8 @@ export const messageOf = (error: unknown): string => {
     case 404:
       return "見つかりません";
     case 409:
-      return "承認待ちのため保存できません";
+      // 理由（承認待ち・保存の重なりなど）は、API の detail を ErrorMessage が下に並べる
+      return "保存できませんでした";
     case 422:
       return "入力を確かめてください";
     default:

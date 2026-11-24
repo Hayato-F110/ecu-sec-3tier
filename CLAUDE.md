@@ -99,6 +99,7 @@
 - API：`cd backend && uv run pytest`、静的解析 `uv run ruff check .`・`uv run ruff format --check .`。テストは同じ PostgreSQL に `ecu_sec_test`・`ecu_sec_test_migrations` を作り直して流す（開発用の `ecu_sec` には触らない。DB が起動している必要がある）
 - DB：テーブルの作成・更新 `cd backend && uv run alembic upgrade head`、ダミーデータ `uv run python -m app.seed`（データがあれば何もしない）。テーブルを変えたら `uv run alembic revision --autogenerate -m "説明"` で変更履歴を作り、中身を読んでから使う
 - 画面：`cd frontend && npm test`（Vitest。`fetch` を差し替えて API の応答を作る）、`npm run lint`（ESLint と Prettier）、`npm run build`（型の検査とビルド）。依存を入れるのは `npm ci`
+- 画面のコンテナ（nginx）：`node --test tests/web/`（3層が動いているときだけ確かめ、止まっていれば飛ばす。`nginx.conf` を変えたら `docker compose up -d --build web` のあとに流す）
 - 画面を開く：`docker compose up -d --build` のあと `http://127.0.0.1:8080`。仮のユーザー ID で試すには `.env` の `DEV_AUTH_ENABLED=true` が要る（試し終わったら false）
 - インフラ：`terraform -chdir=infra/classic fmt -check`・`validate`・`plan`
 - 3層の起動：`docker compose up -d`（止めるのは `docker compose down`。`-v` はデータを消すので確認が要る）

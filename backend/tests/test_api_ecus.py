@@ -146,6 +146,22 @@ def test_get_returns_open_version_else_latest_approved(
     assert (body["assessment"]["version"], body["assessment"]["status"]) == (version, status)
 
 
+def test_get_on_ecu_without_versions_returns_all_items_empty(api: Api) -> None:
+    """版がなくても全項目を空で返す。画面はこの一覧で入力欄を作るので、空だと最初の下書きを作れない。"""
+    supplier = api.user(A_EDITOR).company_id
+    ecu = Ecu(supplier_id=supplier, name="新しい ECU", part_no="DMY-A997", vehicle_model="架空車")
+    api.session.add(ecu)
+    api.session.commit()
+
+    body = api.get(assessment_url(ecu), A_EDITOR).json()
+
+    assert body["assessment"] is None
+    assert [e["item_id"] for e in body["entries"]] == item_ids(api.session)
+    assert {(e["status"], e["evidence"], e["planned_date"]) for e in body["entries"]} == {
+        (None, None, None)
+    }
+
+
 def test_get_other_company_ecu_is_404_same_as_missing(api: Api) -> None:
     other = api.get(assessment_url(api.ecu(DRAFT)), B_EDITOR)
     missing = api.get(assessment_url(NO_SUCH_ECU), B_EDITOR)

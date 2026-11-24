@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -182,14 +182,14 @@ describe("対策状況の入力", () => {
     expect(screen.queryByRole("button", { name: "下書きを保存" })).toBeNull();
   });
 
-  it("承認待ちの版では、保存できないことを示し、保存が 409 なら承認待ちの文言を出す", async () => {
+  it("承認待ちの版では、保存できないことを示し、保存が 409 なら API の理由を出す", async () => {
     const user = userEvent.setup();
     stubFetch(
       {
         status: 200,
         body: view({ assessment: { id: 7, version: 2, status: "pending" } }),
       },
-      { status: 409, body: { detail: "承認待ちです" } },
+      { status: 409, body: { detail: "承認待ちの版は編集できません" } },
     );
     renderForm();
     expect(
@@ -198,9 +198,82 @@ describe("対策状況の入力", () => {
       ),
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "下書きを保存" }));
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "承認待ちのため保存できません",
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("保存できませんでした")).toBeTruthy();
+    expect(
+      within(alert).getByText("承認待ちの版は編集できません"),
+    ).toBeTruthy();
+  });
+
+  it("保存が重なった 409 では、承認待ちとは言わず、やり直しを促す API の理由を出す", async () => {
+    const user = userEvent.setup();
+    stubFetch(
+      { status: 200, body: view() },
+      {
+        status: 409,
+        body: { detail: "ほかの保存と重なりました。やり直してください" },
+      },
     );
+    renderForm();
+    await user.click(
+      await screen.findByRole("button", { name: "下書きを保存" }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(
+      within(alert).getByText("ほかの保存と重なりました。やり直してください"),
+    ).toBeTruthy();
+    expect(alert.textContent).not.toContain("承認待ち");
+  });
+
+  it("保存済みの項目は（未選択）に戻せない（送らない項目は API が前の値のまま残すため）", async () => {
+    stubFetch({ status: 200, body: view() });
+    renderForm();
+    const saved = (await screen.findByLabelText(
+      "セキュアブート の状態",
+    )) as HTMLSelectElement;
+    const unsaved = screen.getByLabelText(
+      "メッセージ認証 の状態",
+    ) as HTMLSelectElement;
+    const blank = (select: HTMLSelectElement) =>
+      [...select.options].find((o) => o.value === "")!;
+    expect(blank(saved).disabled).toBe(true);
+    expect(blank(unsaved).disabled).toBe(false);
+  });
+
+  it("保存の途中で仮のユーザー ID を変えたら、前の保存の結果で上書きしない", async () => {
+    const user = userEvent.setup();
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200 });
+    let releaseSave: (r: Response) => void = () => {};
+    const replies: (() => Promise<Response>)[] = [
+      async () => json(view()), // ユーザー 5 の取得
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseSave = resolve; // ユーザー 5 の保存（応答を止めておく）
+        }),
+      async () =>
+        json(view({ assessment: { id: 9, version: 4, status: "draft" } })), // ユーザー 7 の取得
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() => replies.shift()!()),
+    );
+    const { rerender } = render(<AssessmentForm userId="5" ecuId={12} />);
+    await user.click(
+      await screen.findByRole("button", { name: "下書きを保存" }),
+    );
+    rerender(<AssessmentForm userId="7" ecuId={12} />);
+    expect(await screen.findByText("版 4：下書き")).toBeTruthy();
+
+    await act(async () => {
+      releaseSave(
+        json(view({ assessment: { id: 8, version: 3, status: "draft" } })),
+      );
+    });
+
+    expect(screen.getByText("版 4：下書き")).toBeTruthy();
+    expect(screen.queryByText("版 3：下書き")).toBeNull();
+    expect(screen.queryByText("保存しました")).toBeNull();
   });
 
   it("承認済みの版を見ているときは、保存すると新しい版になると示す", async () => {

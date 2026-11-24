@@ -79,6 +79,26 @@ describe("API を呼ぶ関数", () => {
     expect((error as ApiError).details).toEqual(["予定日が不正です"]);
   });
 
+  it.each([409, 422])(
+    "%i で理由が文章（detail が文字列）なら、その理由を details に入れる",
+    async (status) => {
+      stubFetch(status, { detail: "存在しない対策項目：[999]" });
+      const error = await listEcus("5").catch((e: unknown) => e);
+      expect((error as ApiError).details).toEqual([
+        "存在しない対策項目：[999]",
+      ]);
+    },
+  );
+
+  it.each([401, 403, 404])(
+    "%i では API の文章を details に入れない（画面の決まった文言だけを出す）",
+    async (status) => {
+      stubFetch(status, { detail: "見つかりません" });
+      const error = await listEcus("5").catch((e: unknown) => e);
+      expect((error as ApiError).details).toEqual([]);
+    },
+  );
+
   it("JSON でない失敗の応答でも ApiError になる", async () => {
     stubFetch(502, "Bad Gateway");
     const error = await listEcus("5").catch((e: unknown) => e);
