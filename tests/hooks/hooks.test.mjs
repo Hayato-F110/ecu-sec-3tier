@@ -496,13 +496,47 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     const s3 = "| S3 | 「Create bucket」を押す |\n| S3 | 「Permissions」を開く |\n";
     assert.notEqual(findStepsWithoutSource(s3), null);
   });
-  test("（SC3-31 レビュー1-4）「入力」は「を・に・へ入力」「」と入力」だけ。「出力と入力」は数えない", () => {
+  test("（SC3-31 レビュー1-4）「入力」は「を・に・へ・と入力」だけ。「出力と入力」は数えない", () => {
     const noun = "- AWS の画面：出力と入力の欄を確かめる\n- IAM の入力できる欄を見る\n";
     assert.equal(findStepsWithoutSource(noun), null);
     const steps = "1. AWS コンソールの「名前」欄へ入力する\n2. 検索欄に「IAM」と入力する\n";
     assert.notEqual(findStepsWithoutSource(steps), null);
     // かっこの中の矢印も同じ決まり：「入力できる」では数えない
     assert.equal(findStepsWithoutSource("1. AWS の準備（予算 → IAM → CLI）で入力できる欄を見る\n"), null);
+  });
+  // ---- SC3-31 のレビュー2回目（最後の回）の指摘（直しを戻すと落ちる） ----
+  test("（SC3-31 レビュー2-R1）1行目にだけ AWS とある手順の表も、「『画面の名前』を開く・押す」の行を数えて止める", () => {
+    const table =
+      "| # | 操作 |\n|---|---|\n| 1 | AWS コンソールで IAM を開く |\n| 2 | 「Users」を開く |\n| 3 | 「Create user」を押す |\n";
+    assert.notEqual(findStepsWithoutSource(table), null);
+  });
+  test("（SC3-31 レビュー2-R2）AWS と GitHub の手順が同じ箇条書きにあれば、両方の出典を求める", () => {
+    const both =
+      "1. AWS コンソールで IAM を開く\n2. GitHub の Settings で\n3. 「Secrets」タブを開く\n4. 「New secret」を押す\n";
+    assert.notEqual(findStepsWithoutSource(`${both}出典：https://docs.aws.amazon.com/IAM/\n`), null);
+    assert.equal(
+      findStepsWithoutSource(
+        `${both}出典：https://docs.aws.amazon.com/IAM/ ・ https://docs.github.com/ja/actions\n`,
+      ),
+      null,
+    );
+  });
+  test("（SC3-31 レビュー2-R3）箇条書きのすぐあとに続く表でも、表の見出しのサービスを見る", () => {
+    const mixed =
+      "- GitHub のリポジトリで：\n| 手順 | GitHub での操作 |\n|---|---|\n| 1 | 「Settings」を開く |\n| 2 | 「Branches」を選ぶ |\n";
+    assert.notEqual(findStepsWithoutSource(mixed), null);
+  });
+  test("（SC3-31 レビュー2-R4）入力する値をコードで書いた「に `IAM` と入力する」も操作とみなす", () => {
+    const steps = "1. AWS コンソールの検索欄に `IAM` と入力する\n2. 「Users」に `dev` と入力する\n";
+    assert.notEqual(findStepsWithoutSource(steps), null);
+  });
+  test("（SC3-31 レビュー2-R5）表の直前の「画面で確かめること：」は、外部サービスの手がかりにしない", () => {
+    const own = "AWS は今日は使いません。\n\n画面で確かめること：\n| 1 | 一覧を開く |\n| 2 | ECU を選ぶ |\n";
+    assert.equal(findStepsWithoutSource(own), null);
+  });
+  test("（SC3-31 レビュー2-R6）「に入力できる」「欄に入力できる値」は操作とみなさない", () => {
+    const can = "- AWS の画面：フォームに入力できる\n- IAM の欄に入力できる値を見る\n";
+    assert.equal(findStepsWithoutSource(can), null);
   });
   test("（SC3-31）表の行は、その行にサービスの名前か画面の部品があるときだけ、操作の言葉で手順とみなす", () => {
     // 行ごとに画面の手がかりがある表は、今までどおり止める
@@ -514,7 +548,7 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
       "| # | やること |\n|---|---|\n| 1 | AWS の予算を確かめる |\n| 2 | 一覧を開く |\n| 3 | 結果を選ぶ |\n";
     assert.equal(findStepsWithoutSource(mixed), null);
   });
-  test("（SC3-31）「入力」は「を・に・と入力」のときだけ操作とみなす（「入力できる」「入力画面」は数えない）", () => {
+  test("（SC3-31）「入力」は「を・に・へ・と入力」のときだけ操作とみなす（「入力できる」「入力画面」は数えない）", () => {
     const noun = "- AWS の準備：入力画面の説明を読む\n- IAM の入力できる欄を確かめる\n";
     assert.equal(findStepsWithoutSource(noun), null);
     const steps = "1. AWS コンソールの検索欄に「IAM」と入力する\n2. 「Users」に名前を入力する\n";

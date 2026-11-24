@@ -60,9 +60,12 @@ const SERVICE = new RegExp(
 // （2026-11-23：「開く PC の書体」「ご本人だけが開けます」を操作と数えて誤って止めたため）
 const OPEN_PUSH_SELECT =
   /(を|から|で)\s*[おご]?(開[くきい]|開け(?!ま)|押[すしせ]|選[ぶびんべ])/;
-// 「入力」は「を・に・へ入力」と「」と入力」のときだけ（「入力できる」「入力画面」「出力と入力」は操作でない。
-// 2026-11-24：完了条件「ブラウザから入力できる」を操作と数えて誤って止めたため。SC3-31）
-const INPUT = "(?:[をにへ]|」と)\\s*入力";
+// 「入力」は「を・に・へ・と入力」のときだけ。「出力と入力」と、あとが「できる・画面・欄・者」のものは操作でない
+// （2026-11-24：完了条件「ブラウザから入力できる」を操作と数えて誤って止めたため。SC3-31）
+const INPUT = "(?:[をにへ]|(?<!出力)と)\\s*入力(?!でき|画面|欄|者)";
+// 「画面の名前」（「」か英語）のすぐあとの開く・押す・選ぶ。表の行で、表のどこかにサービスの名前があるときに数える
+// （「| 2 | 「Users」を開く |」のように、サービスの名前を1行目にしか書かない手順の表のため。SC3-31 レビュー2回目）
+const NAMED_UI = new RegExp(`(」|[A-Z][A-Za-z]+)\\**\\s*${OPEN_PUSH_SELECT.source}`);
 const UI_VERB = new RegExp(
   `${OPEN_PUSH_SELECT.source}|を?入れ|${INPUT}|左のメニュー|クリック|タブ|に切り替え`,
 );
@@ -89,10 +92,14 @@ const withoutRowLabels = (block) => {
     const m = l.match(ROW_LABEL);
     if (m) numbersByLetter.set(m[2], (numbersByLetter.get(m[2]) ?? new Set()).add(m[3]));
   }
-  return block.map((l) => {
+  let labeled = false;
+  const lines = block.map((l) => {
     const m = l.match(ROW_LABEL);
-    return m && numbersByLetter.get(m[2]).size >= 2 ? l.replace(ROW_LABEL, "$1#$4") : l;
+    if (!m || numbersByLetter.get(m[2]).size < 2) return l;
+    labeled = true;
+    return l.replace(ROW_LABEL, "$1#$4");
   });
+  return { lines, labeled };
 };
 
 // 手順のサービスごとの公式の資料（ブログ・利用者どうしの質問サイトは不可）。
@@ -188,18 +195,28 @@ const countSteps = (text) => {
     // 続いている箇条書きを1つのまとまりとして見る
     let j = i;
     while (j < lines.length && LIST_ITEM.test(lines[j])) j += 1;
-    const block = withoutRowLabels(lines.slice(i, j));
+    const { lines: block, labeled } = withoutRowLabels(lines.slice(i, j));
     const intro = i > 0 ? lines[i - 1] : "";
     const hasClue = (l) => SERVICE.test(l) || CHROME.test(l);
     const onScreen = block.some(hasClue);
-    // 表の見出しの行か、表の直前の行（「GitHub のリポジトリで：」）に手がかりがあれば、表の全部の行が画面の行
-    const tableOnScreen = TABLE_ROW.test(block[0]) && (hasClue(block[0]) || hasClue(intro));
+    // 表（箇条書きのすぐあとに続く表も）の見出しの行か、表の直前の行（「GitHub のリポジトリで：」）に
+    // サービスの名前があれば、表の全部の行が外部サービスの画面の行。「画面」などの部品の言葉は、
+    // 自分の画面の確認の表（「画面で確かめること：」）にも使うので、ここでは手がかりにしない
+    const firstTable = block.findIndex((l) => TABLE_ROW.test(l));
+    const beforeTable = firstTable > 0 ? block[firstTable - 1] : intro;
+    const tableOnService =
+      firstTable >= 0 && (SERVICE.test(block[firstTable]) || SERVICE.test(beforeTable));
+    const tableHasService = block.some((l) => TABLE_ROW.test(l) && SERVICE.test(l));
     const counted = [];
     for (const line of block) {
-      // 表の行は、その行か表の見出し・直前の行にサービスの名前か画面の部品があるときだけ、操作の言葉で数える。
+      // 表の行は、次のどれかのときだけ、操作の言葉で数える（矢印の数え方は変えない）：
+      // その行にサービスの名前か画面の部品がある／表の見出し・直前の行にサービスの名前がある／
+      // 表のどこかにサービスの名前があり、その行が「『画面の名前』を開く・押す・選ぶ」の形（S1・S2 の番号の表は除く）。
       // 表は予定・仕分け・証拠のまとめにも使い、ほかの行の「AWS」で全部の行を手順と数えてしまうため
-      // （2026-11-24：予定の表と、指摘の仕分けの表で誤って止めた。SC3-31）。矢印の数え方は変えない
-      const rowOnScreen = TABLE_ROW.test(line) ? tableOnScreen || hasClue(line) : onScreen;
+      // （2026-11-24：予定の表と、指摘の仕分けの表で誤って止めた。SC3-31）
+      const rowOnScreen = TABLE_ROW.test(line)
+        ? hasClue(line) || tableOnService || (tableHasService && !labeled && NAMED_UI.test(line))
+        : onScreen;
       const isStep = rowOnScreen && UI_VERB.test(line) && !PAST.test(line) ? 1 : 0;
       // 1行で数えるのは、操作の行（1）と、その行の矢印の数の多いほう
       const n = Math.max(isStep, arrowsOf(line));
@@ -208,13 +225,15 @@ const countSteps = (text) => {
         counted.push(line);
       }
     }
-    // どのサービスの手順かは、手順と数えた行と、まとまりの直前の行（「AWS のコンソールで」など）で決める。
-    // 手順を含まない表（Jira の行がある済み・未済の表など）を材料にすると、要らない出典を求めてしまう
-    // （2026-11-24：AWS の手順に AWS の出典があるのに、同じ回の済み・未済の表の Jira で止めた。SC3-31）。
-    // そこにサービスの名前がなければ、手順を含むまとまり全体（見出しの項目「- GitHub の設定で：」など）から探す
+    // どのサービスの手順かを決める材料：箇条書きの行は、まとまり全体（見出しの項目「- GitHub の設定で：」も）。
+    // 表の行は、手順と数えた行と表の見出しだけ。手順を含まない表（Jira の行がある済み・未済の表など）を
+    // 材料にすると、要らない出典を求めてしまう
+    // （2026-11-24：AWS の手順に AWS の出典があるのに、同じ回の済み・未済の表の Jira で止めた。SC3-31）
     if (counted.length > 0) {
-      const near = `${intro}\n${counted.join("\n")}`;
-      stepText += `${providersOf(near).size > 0 ? near : `${intro}\n${block.join("\n")}`}\n`;
+      const listLines = block.filter((l) => !TABLE_ROW.test(l));
+      const tableLines = counted.filter((l) => TABLE_ROW.test(l));
+      const header = tableLines.length > 0 ? block[firstTable] : "";
+      stepText += `${intro}\n${[...listLines, header, ...tableLines].join("\n")}\n`;
     }
     i = j;
   }
