@@ -7,6 +7,7 @@
 """
 
 import ipaddress
+from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -52,24 +53,32 @@ def latest_approved(db: Session, ecu_id: int) -> Assessment | None:
 
 
 def view_of(db: Session, assessment: Assessment | None) -> AssessmentView:
+    # 対策項目を起点にする：まだ入力のない項目も、空のまま並べて返す（画面が全項目を出せるように）。
+    # 版がまだない ECU でも同じ。空の一覧を返すと、画面に入力欄が出ず、最初の下書きを作れない
+    rows: Sequence[tuple[MeasureItem, AssessmentEntry | None]]
     if assessment is None:
-        return AssessmentView(assessment=None, entries=[])
-    # 対策項目を起点にする：まだ入力のない項目も、空のまま並べて返す（画面が全項目を出せるように）
-    rows = db.execute(
-        select(MeasureItem, AssessmentEntry)
-        .outerjoin(
-            AssessmentEntry,
-            and_(
-                AssessmentEntry.item_id == MeasureItem.id,
-                AssessmentEntry.assessment_id == assessment.id,
-            ),
+        items = db.scalars(select(MeasureItem).order_by(MeasureItem.sort_order)).all()
+        rows = [(m, None) for m in items]
+    else:
+        rows = (
+            db.execute(
+                select(MeasureItem, AssessmentEntry)
+                .outerjoin(
+                    AssessmentEntry,
+                    and_(
+                        AssessmentEntry.item_id == MeasureItem.id,
+                        AssessmentEntry.assessment_id == assessment.id,
+                    ),
+                )
+                .order_by(MeasureItem.sort_order)
+            )
+            .tuples()
+            .all()
         )
-        .order_by(MeasureItem.sort_order)
-    ).all()
     return AssessmentView(
-        assessment=AssessmentOut(
-            id=assessment.id, version=assessment.version, status=assessment.status
-        ),
+        assessment=None
+        if assessment is None
+        else AssessmentOut(id=assessment.id, version=assessment.version, status=assessment.status),
         entries=[
             EntryOut(
                 item_id=m.id,

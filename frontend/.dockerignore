@@ -1,0 +1,6 @@
+node_modules
+dist
+*.tsbuildinfo
+# 秘密情報をビルドに渡さない（frontend/ に置いてしまったときの守り。VITE_ で始まる値は画面の JS に埋め込まれる）
+.env
+.env.*
