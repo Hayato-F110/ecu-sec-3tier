@@ -37,6 +37,13 @@ describe("nginx（frontend/nginx.conf）", () => {
     assert.equal(r.headers.get("x-content-type-options"), "nosniff");
   });
 
+  check("API の失敗の応答（401）にも守りのヘッダーが付く（/api/ に add_header を足すと消えるのを見張る）", async () => {
+    const r = await fetch(`${BASE}/api/ecus/999999/assessment`);
+    assert.equal(r.status, 401);
+    assert.ok(r.headers.get("content-security-policy")?.startsWith(CSP_START));
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+  });
+
   for (const path of ["/", "/ecus/3"]) {
     check(`${path} は index.html を毎回確かめさせ（no-cache）、守りのヘッダーも付く`, async () => {
       const r = await fetch(`${BASE}${path}`);

@@ -162,6 +162,30 @@ def test_get_on_ecu_without_versions_returns_all_items_empty(api: Api) -> None:
     }
 
 
+def test_other_company_ecu_without_versions_is_404_same_as_missing(api: Api) -> None:
+    """版のない ECU でも、他社なら 404（全項目を返す枝より先に、会社で止める）。"""
+    supplier = api.user(A_EDITOR).company_id
+    ecu = Ecu(supplier_id=supplier, name="新しい ECU", part_no="DMY-A996", vehicle_model="架空車")
+    api.session.add(ecu)
+    api.session.commit()
+    before = snapshot(api.session)
+
+    for res, missing in [
+        (
+            api.get(assessment_url(ecu), B_EDITOR),
+            api.get(assessment_url(NO_SUCH_ECU), B_EDITOR),
+        ),
+        (
+            api.put(draft_url(ecu), full_body(api.session), B_EDITOR),
+            api.put(draft_url(NO_SUCH_ECU), full_body(api.session), B_EDITOR),
+        ),
+    ]:
+        assert res.status_code == 404
+        assert (res.status_code, res.json()) == (missing.status_code, missing.json())
+    assert versions(api.session, ecu) == []
+    assert snapshot(api.session) == before
+
+
 def test_get_other_company_ecu_is_404_same_as_missing(api: Api) -> None:
     other = api.get(assessment_url(api.ecu(DRAFT)), B_EDITOR)
     missing = api.get(assessment_url(NO_SUCH_ECU), B_EDITOR)
