@@ -60,8 +60,10 @@ const SERVICE = new RegExp(
 // （2026-11-23：「開く PC の書体」「ご本人だけが開けます」を操作と数えて誤って止めたため）
 const OPEN_PUSH_SELECT =
   /(を|から|で)\s*[おご]?(開[くきい]|開け(?!ま)|押[すしせ]|選[ぶびんべ])/;
+// 「入力」は「を・に・と入力」のときだけ（「入力できる」「入力画面」「入力者」は操作でない。
+// 2026-11-24：完了条件「ブラウザから入力できる」を操作と数えて誤って止めたため。SC3-31）
 const UI_VERB = new RegExp(
-  `${OPEN_PUSH_SELECT.source}|を?入れ|入力|左のメニュー|クリック|タブ|に切り替え`,
+  `${OPEN_PUSH_SELECT.source}|を?入れ|[をにと]\\s*入力|左のメニュー|クリック|タブ|に切り替え`,
 );
 // かっこの中の矢印を数える手がかり：はっきりした操作の言葉か、作成・入力（その行のどこか）と、
 // 英語の画面の名前（Billing・Create など）か画面の部品の言葉（かっこの中）
@@ -75,6 +77,10 @@ const CHROME = /メニュー|ボタン|画面|タブ|コンソール|検索欄|�
 const PAST = /た[。）)]?\s*\|?\s*$/;
 // 箇条書き・番号つき・①②・表の行（日本語では「・」のあとに空白がないことが多い）
 const LIST_ITEM = /^\s*(\d+[.)．]\s*|[-*]\s+|・\s*|[①-⑳]\s*|\|)/;
+const TABLE_ROW = /^\s*\|/;
+// 表の1列目が「S3」「A1」のような番号だけの欄は、指摘・項目の番号として扱う（AWS の S3 と数えない。
+// 2026-11-24：指摘の番号 S3 を AWS の S3 と見なして誤って止めたため。SC3-31）
+const withoutRowLabel = (line) => line.replace(/^(\s*\|\s*)[A-Z]\d+(\s*\|)/, "$1#$2");
 
 // 手順のサービスごとの公式の資料（ブログ・利用者どうしの質問サイトは不可）。
 // ホスト名のあとは、英数字・「.」・「-」以外（「/」・空白・句読点・かっこ・「>」など）
@@ -169,16 +175,27 @@ const countSteps = (text) => {
     // 続いている箇条書きを1つのまとまりとして見る
     let j = i;
     while (j < lines.length && LIST_ITEM.test(lines[j])) j += 1;
-    const block = lines.slice(i, j);
+    const block = lines.slice(i, j).map((l) => (TABLE_ROW.test(l) ? withoutRowLabel(l) : l));
     const intro = i > 0 ? lines[i - 1] : "";
     const onScreen = block.some((l) => SERVICE.test(l) || CHROME.test(l));
+    const counted = [];
     for (const line of block) {
-      const isStep = onScreen && UI_VERB.test(line) && !PAST.test(line) ? 1 : 0;
+      // 表の行は、その行の中にサービスの名前か画面の部品があるときだけ、操作の言葉で数える。
+      // 表は予定・仕分け・証拠のまとめにも使い、ほかの行の「AWS」で全部の行を手順と数えてしまうため
+      // （2026-11-24：予定の表と、指摘の仕分けの表で誤って止めた。SC3-31）。矢印の数え方は変えない
+      const rowOnScreen = TABLE_ROW.test(line) ? SERVICE.test(line) || CHROME.test(line) : onScreen;
+      const isStep = rowOnScreen && UI_VERB.test(line) && !PAST.test(line) ? 1 : 0;
       // 1行で数えるのは、操作の行（1）と、その行の矢印の数の多いほう
       const n = Math.max(isStep, arrowsOf(line));
-      if (n > 0) steps += n;
+      if (n > 0) {
+        steps += n;
+        counted.push(line);
+      }
     }
-    if (onScreen) stepText += `${intro}\n${block.join("\n")}\n`;
+    // どのサービスの手順かは、手順と数えた行と、まとまりの直前の行（「AWS のコンソールで」など）だけで決める。
+    // 手順を含まない表（Jira の行がある済み・未済の表など）を材料にすると、要らない出典を求めてしまう
+    // （2026-11-24：AWS の手順に AWS の出典があるのに、同じ回の済み・未済の表の Jira で止めた。SC3-31）
+    if (onScreen && counted.length > 0) stepText += `${intro}\n${counted.join("\n")}\n`;
     i = j;
   }
   return { steps, stepText };
