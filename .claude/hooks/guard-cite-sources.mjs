@@ -60,13 +60,19 @@ const SERVICE = new RegExp(
 // （2026-11-23：「開く PC の書体」「ご本人だけが開けます」を操作と数えて誤って止めたため）
 const OPEN_PUSH_SELECT =
   /(を|から|で)\s*[おご]?(開[くきい]|開け(?!ま)|押[すしせ]|選[ぶびんべ])/;
+// 「入力」は「を・に・へ・と入力」のときだけ。「出力と入力」と、あとが「できる・画面・欄・者」のものは操作でない
+// （2026-11-24：完了条件「ブラウザから入力できる」を操作と数えて誤って止めたため。SC3-31）
+const INPUT = "(?:[をにへ]|(?<!出力)と)\\s*入力(?!でき|画面|欄|者)";
+// 「画面の名前」（「」か英語）のすぐあとの開く・押す・選ぶ。表の行で、表のどこかにサービスの名前があるときに数える
+// （「| 2 | 「Users」を開く |」のように、サービスの名前を1行目にしか書かない手順の表のため。SC3-31 レビュー2回目）
+const NAMED_UI = new RegExp(`(」|[A-Z][A-Za-z]+)\\**\\s*${OPEN_PUSH_SELECT.source}`);
 const UI_VERB = new RegExp(
-  `${OPEN_PUSH_SELECT.source}|を?入れ|入力|左のメニュー|クリック|タブ|に切り替え`,
+  `${OPEN_PUSH_SELECT.source}|を?入れ|${INPUT}|左のメニュー|クリック|タブ|に切り替え`,
 );
 // かっこの中の矢印を数える手がかり：はっきりした操作の言葉か、作成・入力（その行のどこか）と、
 // 英語の画面の名前（Billing・Create など）か画面の部品の言葉（かっこの中）
 // （「手に入れる」「タブ区切り」のような、操作でない言葉は含めない）
-const ACTION = new RegExp(`${OPEN_PUSH_SELECT.source}|クリック|に切り替え|作成|を作[るりっ]|入力`);
+const ACTION = new RegExp(`${OPEN_PUSH_SELECT.source}|クリック|に切り替え|作成|を作[るりっ]|${INPUT}`);
 const SCREEN_IN_PARENS = /[A-Z][a-z]{2,}|メニュー|ボタン|画面|コンソール|検索欄/;
 // 画面の部品の言葉。手順のまとまりに、これかサービスの名前が1つもなければ手順とみなさない
 // （「1. 「A 案」を選ぶ」のような、決めてほしいことの一覧を止めないため）
@@ -75,6 +81,26 @@ const CHROME = /メニュー|ボタン|画面|タブ|コンソール|検索欄|�
 const PAST = /た[。）)]?\s*\|?\s*$/;
 // 箇条書き・番号つき・①②・表の行（日本語では「・」のあとに空白がないことが多い）
 const LIST_ITEM = /^\s*(\d+[.)．]\s*|[-*]\s+|・\s*|[①-⑳]\s*|\|)/;
+const TABLE_ROW = /^\s*\|/;
+const ROW_LABEL = /^(\s*\|\s*)([A-Z])(\d+)(\s*\|)/;
+// 表の1列目が「S1」「S2」「S3」のような番号の並びなら、指摘・項目の番号として扱う（AWS の S3 と数えない。
+// 2026-11-24：指摘の番号 S3 を AWS の S3 と見なして誤って止めたため。SC3-31）。
+// 同じ文字で違う数字が2つ以上あるときだけ（1列目にサービスの S3 を並べた表は、番号とみなさない）
+const withoutRowLabels = (block) => {
+  const numbersByLetter = new Map();
+  for (const l of block) {
+    const m = l.match(ROW_LABEL);
+    if (m) numbersByLetter.set(m[2], (numbersByLetter.get(m[2]) ?? new Set()).add(m[3]));
+  }
+  let labeled = false;
+  const lines = block.map((l) => {
+    const m = l.match(ROW_LABEL);
+    if (!m || numbersByLetter.get(m[2]).size < 2) return l;
+    labeled = true;
+    return l.replace(ROW_LABEL, "$1#$4");
+  });
+  return { lines, labeled };
+};
 
 // 手順のサービスごとの公式の資料（ブログ・利用者どうしの質問サイトは不可）。
 // ホスト名のあとは、英数字・「.」・「-」以外（「/」・空白・句読点・かっこ・「>」など）
@@ -169,16 +195,46 @@ const countSteps = (text) => {
     // 続いている箇条書きを1つのまとまりとして見る
     let j = i;
     while (j < lines.length && LIST_ITEM.test(lines[j])) j += 1;
-    const block = lines.slice(i, j);
+    const { lines: block, labeled } = withoutRowLabels(lines.slice(i, j));
     const intro = i > 0 ? lines[i - 1] : "";
-    const onScreen = block.some((l) => SERVICE.test(l) || CHROME.test(l));
+    const hasClue = (l) => SERVICE.test(l) || CHROME.test(l);
+    const onScreen = block.some(hasClue);
+    // 表（箇条書きのすぐあとに続く表も）の見出しの行か、表の直前の行（「GitHub のリポジトリで：」）に
+    // サービスの名前があれば、表の全部の行が外部サービスの画面の行。「画面」などの部品の言葉は、
+    // 自分の画面の確認の表（「画面で確かめること：」）にも使うので、ここでは手がかりにしない
+    const firstTable = block.findIndex((l) => TABLE_ROW.test(l));
+    const beforeTable = firstTable > 0 ? block[firstTable - 1] : intro;
+    const tableOnService =
+      firstTable >= 0 && (SERVICE.test(block[firstTable]) || SERVICE.test(beforeTable));
+    const tableHasService = block.some((l) => TABLE_ROW.test(l) && SERVICE.test(l));
+    const counted = [];
     for (const line of block) {
-      const isStep = onScreen && UI_VERB.test(line) && !PAST.test(line) ? 1 : 0;
+      // 表の行は、次のどれかのときだけ、操作の言葉で数える（矢印の数え方は変えない）：
+      // その行にサービスの名前か画面の部品がある／表の見出し・直前の行にサービスの名前がある／
+      // 表のどこかにサービスの名前があり、その行が「『画面の名前』を開く・押す・選ぶ」の形（S1・S2 の番号の表は除く）。
+      // 表は予定・仕分け・証拠のまとめにも使い、ほかの行の「AWS」で全部の行を手順と数えてしまうため
+      // （2026-11-24：予定の表と、指摘の仕分けの表で誤って止めた。SC3-31）
+      const rowOnScreen = TABLE_ROW.test(line)
+        ? hasClue(line) || tableOnService || (tableHasService && !labeled && NAMED_UI.test(line))
+        : onScreen;
+      const isStep = rowOnScreen && UI_VERB.test(line) && !PAST.test(line) ? 1 : 0;
       // 1行で数えるのは、操作の行（1）と、その行の矢印の数の多いほう
       const n = Math.max(isStep, arrowsOf(line));
-      if (n > 0) steps += n;
+      if (n > 0) {
+        steps += n;
+        counted.push(line);
+      }
     }
-    if (onScreen) stepText += `${intro}\n${block.join("\n")}\n`;
+    // どのサービスの手順かを決める材料：箇条書きの行は、まとまり全体（見出しの項目「- GitHub の設定で：」も）。
+    // 表の行は、手順と数えた行と表の見出しだけ。手順を含まない表（Jira の行がある済み・未済の表など）を
+    // 材料にすると、要らない出典を求めてしまう
+    // （2026-11-24：AWS の手順に AWS の出典があるのに、同じ回の済み・未済の表の Jira で止めた。SC3-31）
+    if (counted.length > 0) {
+      const listLines = block.filter((l) => !TABLE_ROW.test(l));
+      const tableLines = counted.filter((l) => TABLE_ROW.test(l));
+      const header = tableLines.length > 0 ? block[firstTable] : "";
+      stepText += `${intro}\n${[...listLines, header, ...tableLines].join("\n")}\n`;
+    }
     i = j;
   }
   return { steps, stepText };
