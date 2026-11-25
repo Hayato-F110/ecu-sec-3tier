@@ -670,6 +670,28 @@ describe("answer-in-final", () => {
     assert.notEqual(findMissingAnswerSection(q, `#${HEADING}\n答え`), null);
     assert.equal(findMissingAnswerSection(q, `作業です。\n\n${HEADING}\n\n### React\n部品の仕組み`), null);
   });
+  test("書き直しの回（acrossStops）は、Hook が止めた区切りを越えて回の始まりまで数える", () => {
+    const ownerPrompt = JSON.stringify({ type: "user", message: { content: "最初の依頼" } });
+    const jsonl = [queued("前の回"), ownerPrompt, queued("React って何?"), assistant, stopSummary, assistant].join("\n");
+    assert.deepEqual(queuedMessagesOfThisTurn(jsonl), []);
+    assert.deepEqual(queuedMessagesOfThisTurn(jsonl, { acrossStops: true }), ["React って何?"]);
+  });
+  test("命令（commandMode が prompt 以外）は数えない", () => {
+    const bash = JSON.stringify({
+      type: "attachment",
+      attachment: { type: "queued_command", origin: { kind: "human" }, commandMode: "bash", prompt: "git status" },
+    });
+    const prompt = JSON.stringify({
+      type: "attachment",
+      attachment: { type: "queued_command", origin: { kind: "human" }, commandMode: "prompt", prompt: "質問" },
+    });
+    assert.deepEqual(queuedMessagesOfThisTurn([bash, prompt].join("\n")), ["質問"]);
+  });
+  test("Windows の改行（CRLF）と、見出しの付け足しを通す", () => {
+    const q = ["React って何?"];
+    assert.equal(findMissingAnswerSection(q, `作業です。\r\n\r\n${HEADING}\r\n\r\n答え\r\n`), null);
+    assert.equal(findMissingAnswerSection(q, `${HEADING}（2件）\n\n答え`), null);
+  });
   test("文字のないメッセージ（画像だけ）は「文字なし」と出す", () => {
     const line = JSON.stringify({
       type: "attachment",
