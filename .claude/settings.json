@@ -178,6 +178,12 @@
           {
             "type": "command",
             "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/answer-in-final.mjs"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
             "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-cite-sources.mjs"],
             "timeout": 10
           }

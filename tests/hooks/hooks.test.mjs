@@ -32,6 +32,11 @@ import {
 } from "../../.claude/hooks/review-before-pr.mjs";
 import { findWaitWithoutNext } from "../../.claude/hooks/wait-needs-next.mjs";
 import { findStepsWithoutSource } from "../../.claude/hooks/guard-cite-sources.mjs";
+import {
+  findMissingAnswerSection,
+  HEADING,
+  queuedMessagesOfThisTurn,
+} from "../../.claude/hooks/answer-in-final.mjs";
 
 const ROOT = "C:/work/repo";
 
@@ -606,5 +611,41 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
   });
   test("コードブロックの中の言葉は見ない", () => {
     assert.equal(findStepsWithoutSource("```\n1. AWS のコンソールを開く\n2. 押す\n```"), null);
+  });
+});
+
+describe("answer-in-final", () => {
+  // 記録（jsonl）の形は、2026-11-25 の会話の記録で確かめた：
+  // 作業中に届いたメッセージは attachment.type = queued_command、前回の返答の終わりは system の stop_hook_summary
+  const queued = (text, kind = "human") =>
+    JSON.stringify({
+      type: "attachment",
+      attachment: { type: "queued_command", origin: { kind }, prompt: [{ type: "text", text }] },
+    });
+  const stopSummary = JSON.stringify({ type: "system", subtype: "stop_hook_summary" });
+  const assistant = JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "作業中" }] } });
+
+  test("この回に届いたメッセージだけを集める（前回の返答より前は数えない）", () => {
+    const jsonl = [queued("前の回の質問"), stopSummary, assistant, queued("React って何?"), assistant, queued("表示されている?")].join("\n");
+    assert.deepEqual(queuedMessagesOfThisTurn(jsonl), ["React って何?", "表示されている?"]);
+  });
+  test("裏の作業の終わりの知らせ（task-notification）は数えない", () => {
+    const jsonl = [stopSummary, queued("<task-notification>…</task-notification>", "task-notification")].join("\n");
+    assert.deepEqual(queuedMessagesOfThisTurn(jsonl), []);
+  });
+  test("prompt が文字列でも読める。壊れた行は飛ばす", () => {
+    const line = JSON.stringify({
+      type: "attachment",
+      attachment: { type: "queued_command", origin: { kind: "human" }, prompt: "文字列の質問" },
+    });
+    assert.deepEqual(queuedMessagesOfThisTurn(["{壊れた", line].join("\n")), ["文字列の質問"]);
+  });
+  test("届いたメッセージがあり、最後の返答に見出しがなければ止める", () => {
+    assert.notEqual(findMissingAnswerSection(["React って何?"], "作業の状況です。"), null);
+    assert.notEqual(findMissingAnswerSection(["React って何?"], undefined), null);
+  });
+  test("見出しがあれば通す。届いたメッセージがなければ通す", () => {
+    assert.equal(findMissingAnswerSection(["React って何?"], `${HEADING}\n\n| 用語 | 役割 |`), null);
+    assert.equal(findMissingAnswerSection([], "作業の状況です。"), null);
   });
 });
