@@ -28,3 +28,5 @@
 - nginx のテスト：`node --test tests/web/`（3層が動いているときだけ）
 - Jira の開始日（customfield_10015）は遷移と一緒に設定できない。遷移のあと `editJiraIssue` で
 - 作業時間は `node tmp/worktime.mjs YYYY-MM-DD`（「〜時間〜分」で出る）
+- 画面のテスト（Vitest）は、作業フォルダのドライブ名が小文字の `c:` だと、今あるテストまで「Vitest failed to find the current suite」で全部落ちる。PowerShell で `Set-Location "C:\Users\..."`（大文字）にしてから流す（11/25。原因は確かめていない）
+- Docker Desktop は `$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe` にある（Program Files ではない）

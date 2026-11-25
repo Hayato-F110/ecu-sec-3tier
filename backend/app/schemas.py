@@ -81,3 +81,38 @@ class EntryOut(BaseModel):
 class AssessmentView(BaseModel):
     assessment: AssessmentOut | None
     entries: list[EntryOut]
+
+
+# ---- 一括確認マトリクス（メーカー用）。返す欄はここで決めたものだけ ----
+# 根拠の説明・対応予定日・差し戻しの理由・申請者・承認者は、承認済みの版でも返さない
+# （docs/test-plans/SC3-11.md）。欄を足すときは、テストの決めた集合も直す
+
+
+class MatrixItem(BaseModel):
+    id: int
+    code: str
+    title: str
+
+
+class MatrixCell(BaseModel):
+    item_id: int
+    status: str | None
+
+
+class MatrixRow(BaseModel):
+    """1つの ECU。版・確認状況・セルは、最新の承認済みの版から取る。なければすべて空。"""
+
+    ecu_id: int
+    supplier_id: int
+    supplier_name: str
+    ecu_name: str
+    part_no: str
+    vehicle_model: str
+    version: int | None
+    review_status: str | None
+    cells: list[MatrixCell]
+
+
+class MatrixView(BaseModel):
+    items: list[MatrixItem]
+    rows: list[MatrixRow]

@@ -12,6 +12,7 @@ ENDPOINTS = [
     ("GET", "/api/ecus"),
     ("GET", "/api/ecus/{ecu}/assessment"),
     ("PUT", "/api/ecus/{ecu}/draft"),
+    ("GET", "/api/matrix"),
 ]
 BODY = {"entries": [{"item_id": 1, "status": "done", "evidence": "根拠"}]}
 
@@ -45,6 +46,15 @@ def test_inactive_user_is_401(api: Api, method: str, path: str) -> None:
     user.is_active = False
     api.session.commit()
     assert call(api, method, path, {"X-Dev-User-Id": str(user.id)}).status_code == 401
+
+
+def test_inactive_oem_reviewer_cannot_read_matrix(api: Api) -> None:
+    """マトリクスで本当に漏れるのは、無効になったメーカーの確認者（サプライヤは 403 で止まる）。"""
+    user = api.user("oem-reviewer@example.com")
+    user.is_active = False
+    api.session.commit()
+    res = api.client.get("/api/matrix", headers={"X-Dev-User-Id": str(user.id)})
+    assert res.status_code == 401
 
 
 @pytest.mark.parametrize(("method", "path"), ENDPOINTS)

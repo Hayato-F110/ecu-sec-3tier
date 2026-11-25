@@ -38,6 +38,25 @@ export type AssessmentView = {
   entries: EntryOut[];
 };
 
+export type ReviewStatus = "unreviewed" | "confirmed" | "change_requested";
+
+/** 一括確認マトリクス（schemas.py の MatrixView）。cells は items と同じ並び順。
+ *  承認済みの版がない ECU は version・review_status・各セルの status が null */
+export type MatrixView = {
+  items: { id: number; code: string; title: string }[];
+  rows: {
+    ecu_id: number;
+    supplier_id: number;
+    supplier_name: string;
+    ecu_name: string;
+    part_no: string;
+    vehicle_model: string;
+    version: number | null;
+    review_status: ReviewStatus | null;
+    cells: { item_id: number; status: EntryStatus | null }[];
+  }[];
+};
+
 /** API の失敗。status は HTTP の状態コード、details は 422 の項目ごとの msg */
 export class ApiError extends Error {
   readonly status: number;
@@ -93,6 +112,9 @@ const request = async <T>(
 export const listEcus = (userId: string) =>
   request<EcuSummary[]>(userId, "/api/ecus");
 
+export const getMatrix = (userId: string) =>
+  request<MatrixView>(userId, "/api/matrix");
+
 export const getAssessment = (userId: string, ecuId: number) =>
   request<AssessmentView>(userId, `/api/ecus/${ecuId}/assessment`);
 
@@ -136,6 +158,12 @@ export const ASSESSMENT_LABELS: Record<AssessmentStatus, string> = {
   pending: "承認待ち",
   rejected: "差し戻し",
   approved: "承認済み",
+};
+
+export const REVIEW_LABELS: Record<ReviewStatus, string> = {
+  unreviewed: "未確認",
+  confirmed: "確認完了",
+  change_requested: "修正依頼中",
 };
 
 /** 「版 2：承認待ち」の形 */

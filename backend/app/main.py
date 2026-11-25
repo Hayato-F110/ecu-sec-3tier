@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api import ecus
+from app.api import ecus, matrix
 from app.config import Settings, get_settings
 from app.db import make_engine, make_session_factory
 
@@ -33,6 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 接続はここでは開かない（最初の問い合わせのときに開く）
     app.state.session_factory = make_session_factory(make_engine(settings.database_url()))
     app.include_router(ecus.router)
+    app.include_router(matrix.router)
     app.add_exception_handler(RequestValidationError, validation_error)
     return app
 
