@@ -341,7 +341,37 @@ def test_supplier_users_are_403_with_same_body(api: Api, email: str) -> None:
         assert name not in res.text
 
 
-def test_supplier_request_does_not_read_ecus_or_assessments(api: Api) -> None:
+def odd_user(s: Session, company_email: str, role: str) -> User:
+    """役割と会社の種類が食い違う利用者（DB の制約では防いでいない）をテストの中で作る。"""
+    user = User(
+        company_id=company_of(s, company_email).id,
+        email=f"odd-{role}-{company_email}",
+        password_hash=LOCKED_PASSWORD,
+        role=role,
+    )
+    s.add(user)
+    s.commit()
+    return user
+
+
+@pytest.mark.parametrize(
+    ("company_email", "role"),
+    [
+        ("a-editor@example.com", "editor"),
+        ("a-editor@example.com", "supplier_admin"),
+        ("a-editor@example.com", "approver"),
+        ("a-editor@example.com", "reviewer"),  # サプライヤの会社の確認者
+        ("a-editor@example.com", "sys_admin"),  # サプライヤの会社のシステム管理者
+    ],
+)
+def test_supplier_request_does_not_read_ecus_or_assessments(
+    api: Api, company_email: str, role: str
+) -> None:
+    user = odd_user(api.session, company_email, role)
+    # ヘッダーを記録の前に作る（テスト自身の SQL を記録に混ぜない）
+    headers = {"X-Dev-User-Id": str(user.id)}
+    # 読み込み済みの利用者・会社を捨て、API が DB を読む SQL を記録できるようにする
+    api.session.expire_all()
     statements: list[str] = []
     bind = api.session.connection()
 
@@ -350,28 +380,30 @@ def test_supplier_request_does_not_read_ecus_or_assessments(api: Api) -> None:
 
     event.listen(bind, "before_cursor_execute", record)
     try:
-        assert api.get(URL, "a-editor@example.com").status_code == 403
+        assert api.get(URL, headers=headers).status_code == 403
     finally:
         event.remove(bind, "before_cursor_execute", record)
-    assert statements, "SQL を記録できていない"
+    # API が出した SQL を記録できている（本人確認で users、会社の種類で companies を読む）
+    assert any("FROM users" in sql for sql in statements)
+    assert any("FROM companies" in sql for sql in statements)
     for sql in statements:
         assert "ecus" not in sql
         assert "assessment" not in sql
 
 
-@pytest.mark.parametrize("role", ["reviewer", "sys_admin"])
-def test_oem_role_in_supplier_company_is_403(api: Api, role: str) -> None:
-    """役割と会社の種類の食い違い（DB の制約では防いでいない）。役割だけで通さない。"""
-    s = api.session
-    odd = User(
-        company_id=company_of(s, "a-editor@example.com").id,
-        email=f"a-odd-{role}@example.com",
-        password_hash=LOCKED_PASSWORD,
-        role=role,
-    )
-    s.add(odd)
-    s.commit()
-    res = api.get(URL, headers={"X-Dev-User-Id": str(odd.id)})
+@pytest.mark.parametrize(
+    ("company_email", "role"),
+    [
+        ("a-editor@example.com", "reviewer"),  # サプライヤの会社の確認者
+        ("a-editor@example.com", "sys_admin"),  # サプライヤの会社のシステム管理者
+        (OEM_REVIEWER, "editor"),  # メーカーの会社の入力者
+        (OEM_REVIEWER, "approver"),
+    ],
+)
+def test_role_and_company_type_must_both_be_oem(api: Api, company_email: str, role: str) -> None:
+    """役割だけ・会社の種類だけでは通さない。"""
+    user = odd_user(api.session, company_email, role)
+    res = api.get(URL, headers={"X-Dev-User-Id": str(user.id)})
     assert res.status_code == 403
 
 

@@ -44,7 +44,8 @@ export const App = () => {
             element={
               <>
                 <h2>自社 ECU 一覧</h2>
-                <EcuList userId={userId} />
+                {/* ID を変えたら部品を作り直す（前の人の表・絞り込みを残さない） */}
+                <EcuList key={userId} userId={userId} />
               </>
             }
           />
@@ -57,7 +58,7 @@ export const App = () => {
             element={
               <>
                 <h2>一括確認マトリクス</h2>
-                <Matrix userId={userId} />
+                <Matrix key={userId} userId={userId} />
               </>
             }
           />

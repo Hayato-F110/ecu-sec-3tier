@@ -48,9 +48,10 @@ def test_inactive_user_is_401(api: Api, method: str, path: str) -> None:
     assert call(api, method, path, {"X-Dev-User-Id": str(user.id)}).status_code == 401
 
 
-def test_inactive_oem_reviewer_cannot_read_matrix(api: Api) -> None:
-    """マトリクスで本当に漏れるのは、無効になったメーカーの確認者（サプライヤは 403 で止まる）。"""
-    user = api.user("oem-reviewer@example.com")
+@pytest.mark.parametrize("email", ["oem-reviewer@example.com", "oem-sys_admin@example.com"])
+def test_inactive_oem_user_cannot_read_matrix(api: Api, email: str) -> None:
+    """マトリクスで本当に漏れるのは、無効になったメーカーの利用者（サプライヤは 403 で止まる）。"""
+    user = api.user(email)
     user.is_active = False
     api.session.commit()
     res = api.client.get("/api/matrix", headers={"X-Dev-User-Id": str(user.id)})
