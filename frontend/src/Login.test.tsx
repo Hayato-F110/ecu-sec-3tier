@@ -69,6 +69,21 @@ describe("ログイン画面", () => {
     );
   });
 
+  it.each([
+    [502, "API の呼び出しに失敗しました（502）"],
+    [500, "API の呼び出しに失敗しました（500）"],
+  ])(
+    "%i ではパスワードの誤りと言わない（API が止まっているなど）",
+    async (status, text) => {
+      stubLogin(status, { detail: "x" });
+      render(<Login onLogin={vi.fn()} notice={null} />);
+      fill("a-editor@example.com", "pw");
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain(text);
+      expect(alert.textContent).not.toContain("パスワードが違います");
+    },
+  );
+
   it("API に届かないときは、通信の失敗を伝える", async () => {
     vi.stubGlobal(
       "fetch",

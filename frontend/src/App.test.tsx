@@ -183,6 +183,30 @@ describe("ログインしたあと", () => {
     expect(after().every((c) => authOf(c) === "Bearer tok-2")).toBe(true);
   });
 
+  it("401 でログインし直したら、元のページ（マトリクス）に戻る", async () => {
+    let matrixCalls = 0;
+    // 1回目のマトリクスは 401（期限切れ）、2回目は表を返す
+    stubApi((url) => {
+      if (!url.startsWith("/api/matrix")) return json([]);
+      matrixCalls += 1;
+      return matrixCalls === 1
+        ? json({ detail: "ログインが必要です" }, 401)
+        : json(MATRIX);
+    });
+    renderAt("/login");
+    await logIn();
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
+    fireEvent.click(screen.getByRole("link", { name: "一括確認マトリクス" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "ログインしてください",
+    );
+    await logIn();
+    expect(await screen.findByText("DMY-A001")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "一括確認マトリクス" }),
+    ).toBeTruthy();
+  });
+
   it("ログアウトでログイン画面に移り、マトリクスを開けなくなる（#17）", async () => {
     okApi();
     renderAt("/login");

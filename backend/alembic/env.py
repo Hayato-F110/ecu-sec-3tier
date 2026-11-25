@@ -14,7 +14,7 @@ Windows では cp932 で読まれ、日本語で止まるため）：
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from app.config import get_settings
+from app.config import get_db_settings
 from app.models import Base
 
 config = context.config
@@ -22,7 +22,7 @@ target_metadata = Base.metadata
 
 
 def database_url():
-    return config.attributes.get("url") or get_settings().database_url()
+    return config.attributes.get("url") or get_db_settings().database_url()
 
 
 def run_migrations_offline() -> None:

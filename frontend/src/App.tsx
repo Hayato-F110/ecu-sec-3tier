@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Link,
   Navigate,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
 } from "react-router";
@@ -38,11 +39,19 @@ export const App = () => {
   // 書かない（画面に XSS があっても、保存場所から盗まれない。代わりに再読み込みでログインし直す）
   const [token, setToken] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 401 でログイン画面に移ったときの元のページ。ログインし直したらそこへ戻す
+  const [returnTo, setReturnTo] = useState("/");
   const navigate = useNavigate();
+  const location = useLocation();
+  const here = useRef(location.pathname);
+  useEffect(() => {
+    here.current = location.pathname;
+  }, [location.pathname]);
 
   useEffect(() => {
     // API が 401 を返したら（期限切れ・無効になった利用者など）、トークンを捨ててログインし直す
     setUnauthorizedHandler(() => {
+      setReturnTo(here.current === "/login" ? "/" : here.current);
       setToken(null);
       setNotice("ログインしてください");
       navigate("/login", { replace: true });
@@ -50,15 +59,17 @@ export const App = () => {
     return () => setUnauthorizedHandler(null);
   }, [navigate]);
 
+  // 画面の移動はしない：ログイン済みの画面で /login を開いている状態になり、下の
+  // <Navigate to={returnTo}> が元のページ（ふつうは一覧）へ移す
   const onLogin = (newToken: string) => {
     setToken(newToken);
     setNotice(null);
-    navigate("/", { replace: true });
   };
 
   const logout = () => {
     setToken(null);
     setNotice(null);
+    setReturnTo("/");
     navigate("/login", { replace: true });
   };
 
@@ -120,8 +131,8 @@ export const App = () => {
               </>
             }
           />
-          {/* ログイン済みで /login を開いたら一覧へ */}
-          <Route path="/login" element={<Navigate to="/" replace />} />
+          {/* ログイン済みで /login を開いたら、元のページ（401 の前のページ。ふだんは一覧）へ */}
+          <Route path="/login" element={<Navigate to={returnTo} replace />} />
           <Route path="*" element={<p role="alert">見つかりません</p>} />
         </Routes>
       </main>

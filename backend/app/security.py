@@ -40,8 +40,13 @@ def verify_hash(password: str, password_hash: str) -> bool:
 
 @cache
 def _dummy_hash() -> str:
-    # 照合の相手がいないときに使う。最初に使うときに1回だけ計算する
+    # 照合の相手がいないときに使う。1回だけ計算する（app.main の起動のときに先に呼んでおき、
+    # 最初のログインだけ計算が2回になって遅くなる差をなくす）
     return _hasher.hash("dummy-password-for-timing")
+
+
+def warm_up() -> None:
+    _dummy_hash()
 
 
 def verify_password(password: str, password_hash: str | None) -> bool:
@@ -52,7 +57,9 @@ def verify_password(password: str, password_hash: str | None) -> bool:
     （C 言語でいう、memcmp の早期 return で比較時間から一致した長さが漏れるのと同じ）。
     """
     fits = len(password.encode("utf-8")) <= MAX_PASSWORD_BYTES
-    usable = password_hash is not None and password_hash != LOCKED
+    # bcrypt の形でない値（"!"・空・壊れた値）は、照合を飛ばさずダミーと照合する
+    # （pwdlib は知らない形だと計算せずに例外を出すので、時間で利用者の有無が分かってしまう）
+    usable = password_hash is not None and BcryptHasher.identify(password_hash)
     target = password_hash if (usable and fits) else _dummy_hash()
     candidate = password if fits else ""
     matched = verify_hash(candidate, target)  # pyright: ignore[reportArgumentType]

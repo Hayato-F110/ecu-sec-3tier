@@ -1,6 +1,7 @@
 """ログイン（SC3-12）。メールアドレスとパスワードが合えば、トークン（JWT）を返す。
 
-- 失敗の理由（メールアドレスがない・パスワードが違う・無効・ロック）は区別せず、同じ 401
+- 失敗の理由（メールアドレスがない・パスワードが違う・無効な利用者・パスワード未設定の
+  「!」）は区別せず、同じ 401。失敗の回数の制限はまだない（SC3-36）
 - どの経路でもパスワードの照合を1回だけ行う（app.security.verify_password）
 - 成功も失敗も監査ログに残す。入力されたメールアドレス・パスワード・トークンは残さない
 """
@@ -31,7 +32,7 @@ def login(
 ) -> TokenOut:
     # メールアドレスは大文字・小文字を区別しない（users の一意の索引も lower(email)）
     user = db.scalars(
-        select(User).where(func.lower(User.email) == body.email.lower())
+        select(User).where(func.lower(User.email) == func.lower(body.email))
     ).one_or_none()
     ok = security.verify_password(body.password, user.password_hash if user else None)
     ok = ok and user is not None and user.is_active

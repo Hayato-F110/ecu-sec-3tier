@@ -209,3 +209,24 @@ def test_no_dev_auth_left_in_repository() -> None:
             continue
         found += [f"{name}: {w}" for w in words if w in text]
     assert found == []
+
+
+# ---- 1回目のレビューの直し ----
+
+
+def test_db_settings_do_not_need_jwt_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """マイグレーション・ダミーデータは、JWT の鍵がなくても DB につなげる"""
+    from app.config import DbSettings
+
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+    s = DbSettings(  # pyright: ignore[reportCallIssue]
+        _env_file=None, postgres_db="x", postgres_user="x", postgres_password="x"
+    )
+    assert s.database_url().database == "x"
+
+
+def test_env_example_has_no_usable_jwt_key() -> None:
+    """見本のファイルの鍵は空（見本の値のまま起動して、公開の鍵で署名しない）"""
+    lines = (REPO_ROOT / "env.example").read_text(encoding="utf-8").splitlines()
+    values = [line.split("=", 1)[1] for line in lines if line.startswith("JWT_SECRET_KEY=")]
+    assert values == [""]

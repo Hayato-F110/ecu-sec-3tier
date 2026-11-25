@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app import security
 from app.api import auth, ecus, matrix
 from app.config import Settings, get_settings
 from app.db import make_engine, make_session_factory
@@ -15,6 +16,7 @@ from app.db import make_engine, make_session_factory
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    security.warm_up()
     app = FastAPI(
         title="ECU セキュリティ対策状況の管理システム（練習用・ダミーデータ）",
         version="0.1.0",

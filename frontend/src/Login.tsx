@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 
-import { ApiError, login } from "./api";
+import { ApiError, login, messageOf } from "./api";
 
 const FAILED = "メールアドレスかパスワードが違います";
 
@@ -25,11 +25,10 @@ export const Login = ({
     try {
       onLogin(await login(email, password));
     } catch (err) {
-      // 失敗の理由（メールアドレスがない・パスワードが違うなど）は API も画面も区別しない
+      // 失敗の理由（メールアドレスがない・パスワードが違うなど）は API も画面も区別しない。
+      // 401 以外（API が止まっている 502 など）は、パスワードの誤りと言わない
       setError(
-        err instanceof ApiError
-          ? FAILED
-          : "通信に失敗しました。API が動いているか確かめてください",
+        err instanceof ApiError && err.status === 401 ? FAILED : messageOf(err),
       );
       // 打ち間違えたパスワードを画面に残さない
       setPassword("");

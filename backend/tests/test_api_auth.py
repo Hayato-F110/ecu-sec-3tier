@@ -76,6 +76,9 @@ def test_email_is_case_insensitive(with_passwords: Api) -> None:
 def failure_cases(api: Api) -> dict[str, tuple[str, str]]:
     inactive = api.user("b-editor@example.com")
     inactive.is_active = False
+    # bcrypt の形でないハッシュ（空・壊れた値）。照合を飛ばすと時間で利用者の有無が分かる
+    api.user("c-approver@example.com").password_hash = ""
+    api.user("d-approver@example.com").password_hash = "$2b$broken"
     api.session.commit()
     long_password = "あ" * 25  # 75バイト（UTF-8）
     return {
@@ -86,6 +89,8 @@ def failure_cases(api: Api) -> dict[str, tuple[str, str]]:
         "empty_password": ("a-editor@example.com", ""),
         "too_long_existing": ("a-editor@example.com", long_password),
         "too_long_missing": ("nobody@example.com", long_password),
+        "empty_hash": ("c-approver@example.com", PASSWORD),
+        "broken_hash": ("d-approver@example.com", PASSWORD),
     }
 
 
@@ -108,6 +113,8 @@ def test_failures_are_all_the_same_401(with_passwords: Api, monkeypatch) -> None
         assert res.status_code == 401, (case, res.text)
         assert "access_token" not in res.text, case
         assert len(calls) == 1, (case, len(calls))  # どの経路でも照合はちょうど1回
+        # 照合の相手はいつも本物の bcrypt のハッシュ（計算を飛ばす経路がない）
+        assert calls[0].startswith("$2b$") and len(calls[0]) == 60, (case, calls[0])
         bodies.add(res.text)
     assert len(bodies) == 1, bodies
     assert FAILED_TEXT in bodies.pop()
@@ -204,3 +211,27 @@ def test_set_passwords_changes_only_hashes(db_session: Session) -> None:
     assert count == len(users)
     assert [(u.id, u.email, u.role, u.is_active) for u in users] == before
     assert all(u.password_hash.startswith("$2b$") for u in users)
+
+
+# ---- 1回目のレビューの直し ----
+
+
+def test_dummy_hash_is_ready_when_app_starts(db_session: Session) -> None:
+    """起動のときにダミーのハッシュを計算しておく（最初のログインだけ遅い、をなくす）"""
+    import app.security as security
+
+    security._dummy_hash.cache_clear()
+    make_api(db_session)
+    assert security._dummy_hash.cache_info().currsize == 1
+
+
+def test_seed_password_over_72_bytes_stops_with_message(monkeypatch) -> None:
+    """72バイトを超えるパスワードは、DB につなぐ前に分かる文言で止める"""
+    import sys
+
+    from app import seed
+
+    monkeypatch.setenv("SEED_USER_PASSWORD", "a" * 73)
+    monkeypatch.setattr(sys, "argv", ["seed", "--set-passwords"])
+    with pytest.raises(SystemExit, match="72 バイトまで"):
+        seed.main()

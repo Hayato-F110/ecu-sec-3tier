@@ -33,7 +33,7 @@ from app.models import (
     MeasureItem,
     User,
 )
-from app.security import hash_password
+from app.security import MAX_PASSWORD_BYTES, hash_password
 
 SEED = 2026
 # パスワードではなく「ログインできない」印
@@ -355,6 +355,8 @@ def main() -> None:
     password = (secret.get_secret_value() if secret else "") or None  # 空は「なし」
     if args.set_passwords and password is None:
         raise SystemExit("SEED_USER_PASSWORD が空です（.env に入れてください）")
+    if password is not None and len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise SystemExit(f"SEED_USER_PASSWORD は {MAX_PASSWORD_BYTES} バイトまでにしてください")
 
     engine = make_engine()
     with Session(engine) as session, session.begin():
