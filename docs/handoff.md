@@ -1,24 +1,23 @@
 # 引き継ぎ
 
-最終更新：2026-11-24 18:50（週の使用量 99% で止めた）
+最終更新：2026-11-25 17:31
 
 ## いまの状態
 
-- スプリント1（SC3-2・8・9）：すべて完了。ふりかえり `docs/retro/sprint-1.md` と設計判断はオーナーの**承認待ち**
-- スプリント2（11/25〜11/27）：SC3-10・SC3-31 は完了（先に着手）。残りは SC3-11（進行中）・SC3-12（Day 6）・SC3-26・SC3-29
-- SC3-11（Day 5、進行中・開始日 11/24）：ブランチ `feature/SC3-11-matrix`（push 済み）。テストの一覧 `docs/test-plans/SC3-11.md` を書いた。test-plan-reviewer の結果は `.claude/agent-reports/` にある（未読）
+- スプリント1（SC3-2・8・9）：完了（オーナーが 11/25 に Jira で完了にした）。設計判断はオーナーが承認。ふりかえり `docs/retro/sprint-1.md` は KPT の形に書き直した（オーナーの確認待ち）
+- スプリント2（11/25〜11/27 23:00）：SC3-10・SC3-31 は完了。残りは SC3-11（進行中）・SC3-12（Day 6）・SC3-26・SC3-29
+- SC3-11（Day 5、進行中・開始日 11/24）：ブランチ `feature/SC3-11-matrix`（main を取り込み、push 済み）。テストの一覧 `docs/test-plans/SC3-11.md` に test-plan-reviewer の指摘を反映する。オーナーの決定（11/25）：マトリクスはメーカーのシステム管理者にも見せる
 - CLI の認証は `aws login`（オーナーの決定）。Terraform がこの認証で動くかは、Day 12 の前に公式の資料で確かめる
 
 ## 次にやること
 
-1. 空のフォルダ `.claude/worktrees/day-docs` を片付ける（git からは外れている）
-2. test-plan-reviewer の報告を読み、テストの一覧を直す → 設計案をオーナーに出して承認をもらう（`/story`）
-3. SC3-11：テストを先に → 実装（`GET /api/matrix`、画面 `/matrix`）→ `/code-review`（データ分離に関わるので2回まで）・security-reviewer → PR
-4. SC3-11 の「見積もりの見直し」（Day 1〜5 の実際の時間から）
+1. SC3-11：テストの一覧に test-plan-reviewer の指摘（版1→2→3 の ECU、承認待ちだけの ECU、役割の食い違いの 403、全部の文字の欄の XSS）と管理者の決定を反映 → 設計案をオーナーに出して承認をもらう（`/story`）
+2. SC3-11：テストを先に → 実装（`GET /api/matrix`、画面 `/matrix`）→ `/code-review`（データ分離に関わるので2回まで）・security-reviewer → PR
+3. SC3-11 の「見積もりの見直し」（Day 1〜5 の実際の時間から）
 
 ## オーナーにお願いすること
 
-1. ふりかえりと設計判断の承認（`docs/retro/sprint-1.md`・`docs/design-decisions.md` の「スプリント1」）
+1. 書き直したふりかえり（`docs/retro/sprint-1.md`）の確認
 
 ## つまずき防止のメモ
 
@@ -28,4 +27,4 @@
 - `node -e` に正規表現のバックスラッシュを書くと Hook が止める。スクリプトは `tmp/` のファイルに
 - nginx のテスト：`node --test tests/web/`（3層が動いているときだけ）
 - Jira の開始日（customfield_10015）は遷移と一緒に設定できない。遷移のあと `editJiraIssue` で
-- 作業時間は `node tmp/worktime.mjs YYYY-MM-DD`
+- 作業時間は `node tmp/worktime.mjs YYYY-MM-DD`（「〜時間〜分」で出る）
