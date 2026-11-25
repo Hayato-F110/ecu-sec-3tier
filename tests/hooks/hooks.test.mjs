@@ -648,4 +648,33 @@ describe("answer-in-final", () => {
     assert.equal(findMissingAnswerSection(["React って何?"], `${HEADING}\n\n| 用語 | 役割 |`), null);
     assert.equal(findMissingAnswerSection([], "作業の状況です。"), null);
   });
+  test("Esc で止めた回（区切りの記録なし）のメッセージは、オーナーが新しく送ったメッセージで区切る", () => {
+    const ownerPrompt = JSON.stringify({ type: "user", message: { content: [{ type: "text", text: "次の質問" }] } });
+    const toolResult = JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "結果" }] } });
+    const jsonl = [queued("止めた回の質問"), ownerPrompt, assistant, toolResult, assistant].join("\n");
+    assert.deepEqual(queuedMessagesOfThisTurn(jsonl), []);
+    // 道具の結果・Claude Code が足す文（isMeta）では区切らない
+    const meta = JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: "x" }] } });
+    assert.deepEqual(queuedMessagesOfThisTurn([ownerPrompt, queued("Q"), toolResult, meta].join("\n")), ["Q"]);
+  });
+  test("止めたあとの書き直しの回は、止めたあとに届いたメッセージだけを数える", () => {
+    const jsonl = [queued("止めた理由の質問"), stopSummary, assistant, queued("書き直しの間の質問")].join("\n");
+    assert.deepEqual(queuedMessagesOfThisTurn(jsonl), ["書き直しの間の質問"]);
+  });
+  test("見出しは行の始めで、下に中身が要る（引用・コードブロック・空の見出しは通さない）", () => {
+    const q = ["React って何?"];
+    assert.notEqual(findMissingAnswerSection(q, `「${HEADING}」は上に書きました。`), null);
+    assert.notEqual(findMissingAnswerSection(q, `作業です。\n\n${HEADING}\n`), null);
+    assert.notEqual(findMissingAnswerSection(q, `${HEADING}\n\n## 作業の状況\n完了`), null);
+    assert.notEqual(findMissingAnswerSection(q, "```\n" + `${HEADING}\n答え\n` + "```"), null);
+    assert.notEqual(findMissingAnswerSection(q, `#${HEADING}\n答え`), null);
+    assert.equal(findMissingAnswerSection(q, `作業です。\n\n${HEADING}\n\n### React\n部品の仕組み`), null);
+  });
+  test("文字のないメッセージ（画像だけ）は「文字なし」と出す", () => {
+    const line = JSON.stringify({
+      type: "attachment",
+      attachment: { type: "queued_command", origin: { kind: "human" }, prompt: [{ type: "image" }] },
+    });
+    assert.deepEqual(queuedMessagesOfThisTurn(line), ["（文字なし。画像など）"]);
+  });
 });

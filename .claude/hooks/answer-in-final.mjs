@@ -5,14 +5,25 @@
 //       オーナーが対策を求めた。最後の返答は折りたたまれないので、答えはそこに書き直す。
 // 範囲：前回の返答の終わり（記録の stop_hook_summary）のあとに届いたメッセージ（記録の queued_command のうち
 //       origin.kind が human のもの。2026-11-25 の会話の記録で確かめた）。
-// 同じ止め方を続けないよう、止めたあとの再実行（stop_hook_active）では止めない。
+// 止めたあとの書き直しの回でも、その間に新しく届いたメッセージは検査する（止めたときにも区切りの記録が残るので、
+// 同じメッセージで止め続けることはない。2026-11-25 に記録で確かめた）。
 
 import { readFileSync } from "node:fs";
 
 const BLOCK = 2;
 export const HEADING = "## 途中のメッセージへの答え";
 
-/** この回（前回の返答の終わりのあと）に、作業の途中で届いたオーナーのメッセージの文章 */
+/** オーナーが新しく送ったメッセージ（回の始まり）。道具の結果や、Claude Code が足す文（isMeta）は除く */
+const isOwnerPrompt = (entry) => {
+  if (entry?.type !== "user" || entry.isMeta) return false;
+  const c = entry.message?.content;
+  if (typeof c === "string") return true;
+  return Array.isArray(c) && c.length > 0 && c.every((x) => x?.type === "text");
+};
+
+/** この回に、作業の途中で届いたオーナーのメッセージの文章。
+ *  区切り：前回の返答の終わり（stop_hook_summary。Hook が止めたときにも残る）か、
+ *  オーナーが新しく送ったメッセージ（Esc で止めた回は stop_hook_summary が残らないため）のどちらか近いほう */
 export const queuedMessagesOfThisTurn = (jsonl) => {
   const messages = [];
   for (const line of jsonl.split("\n").reverse()) {
@@ -23,6 +34,7 @@ export const queuedMessagesOfThisTurn = (jsonl) => {
       continue;
     }
     if (entry?.type === "system" && entry?.subtype === "stop_hook_summary") break;
+    if (isOwnerPrompt(entry)) break;
     if (entry?.attachment?.type !== "queued_command") continue;
     // 裏の作業の終わりの知らせ（origin.kind = task-notification）も同じ種類で残るので、人のものだけ数える
     if (entry.attachment.origin?.kind !== "human") continue;
@@ -32,16 +44,27 @@ export const queuedMessagesOfThisTurn = (jsonl) => {
       : typeof prompt === "string"
         ? prompt
         : "";
-    messages.unshift(text);
+    messages.unshift(text.trim() === "" ? "（文字なし。画像など）" : text);
   }
   return messages;
+};
+
+/** 行の始めの見出しがあり、その下に中身があるか（コードブロックの中・かぎかっこの引用は数えない） */
+const hasAnswerSection = (text) => {
+  if (typeof text !== "string") return false;
+  const plain = text.replace(/```[\s\S]*?```/g, "");
+  const m = plain.match(/^## 途中のメッセージへの答え[ \t]*$/m);
+  if (m === null) return false;
+  const after = plain.slice(m.index + m[0].length);
+  const body = after.split(/^#{1,2} /m)[0]; // 次の同じか上の見出しまで
+  return body.trim() !== "";
 };
 
 /** 止める理由（文字列）か、止めないなら null */
 export const findMissingAnswerSection = (queued, lastMessage) => {
   if (queued.length === 0) return null;
-  if (typeof lastMessage === "string" && lastMessage.includes(HEADING)) return null;
-  return `作業の途中にオーナーのメッセージが ${queued.length} 件届いたのに、最後の返答に「${HEADING}」の見出しがない`;
+  if (hasAnswerSection(lastMessage)) return null;
+  return `作業の途中にオーナーのメッセージが ${queued.length} 件届いたのに、最後の返答に「${HEADING}」の見出しと答えがない`;
 };
 
 const readStdin = async () => {
@@ -52,7 +75,8 @@ const readStdin = async () => {
 
 const main = async () => {
   const input = JSON.parse((await readStdin()) || "{}");
-  if (input.stop_hook_active) return;
+  // 書き直しの回（stop_hook_active）でも検査する。止めたときにも stop_hook_summary が残るので、
+  // 前に止めたメッセージは数えず、書き直しの間に新しく届いたものだけを見る（同じ止め方を続けない）
   if (typeof input.transcript_path !== "string") return;
   const queued = queuedMessagesOfThisTurn(readFileSync(input.transcript_path, "utf8"));
   const reason = findMissingAnswerSection(queued, input.last_assistant_message);
