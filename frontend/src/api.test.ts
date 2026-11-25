@@ -1,6 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, getAssessment, listEcus, saveDraft } from "./api";
+import {
+  ApiError,
+  getAssessment,
+  listEcus,
+  login,
+  messageOf,
+  saveDraft,
+  setUnauthorizedHandler,
+} from "./api";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setUnauthorizedHandler(null);
+});
 
 /** fetch を差し替えて、決めた応答を返す。呼ばれ方はあとで mock.calls で見る */
 const stubFetch = (status: number, body: unknown) => {
@@ -21,17 +34,11 @@ const headersOf = (fetchMock: ReturnType<typeof stubFetch>) => {
 };
 
 describe("API を呼ぶ関数", () => {
-  it("仮のユーザー ID をヘッダー X-Dev-User-Id に付ける", async () => {
+  it("トークンを Authorization: Bearer に付ける（SC3-12 #15）", async () => {
     const fetchMock = stubFetch(200, []);
-    await listEcus("5");
+    await listEcus("tok-5");
     expect(fetchMock.mock.calls[0][0]).toBe("/api/ecus");
-    expect(headersOf(fetchMock).get("X-Dev-User-Id")).toBe("5");
-  });
-
-  it("仮のユーザー ID が空なら、ヘッダーを付けない", async () => {
-    const fetchMock = stubFetch(200, []);
-    await listEcus("");
-    expect(headersOf(fetchMock).has("X-Dev-User-Id")).toBe(false);
+    expect(headersOf(fetchMock).get("Authorization")).toBe("Bearer tok-5");
   });
 
   it("対策状況の取得は ECU の番号のパスを呼ぶ", async () => {
@@ -105,5 +112,58 @@ describe("API を呼ぶ関数", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).status).toBe(502);
     expect((error as ApiError).details).toEqual([]);
+  });
+
+  it("ログインの API 以外の 401 では、登録した処理（トークンを捨てて /login へ）を呼ぶ（#17）", async () => {
+    stubFetch(401, { detail: "ログインが必要です" });
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    const error = await listEcus("tok-5").catch((e: unknown) => e);
+    expect((error as ApiError).status).toBe(401);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([403, 404, 422])("%i では 401 の処理を呼ばない", async (status) => {
+    stubFetch(status, { detail: "x" });
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    await listEcus("tok-5").catch(() => null);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("401 の文言は「ログインしてください」（#17）", () => {
+    expect(messageOf(new ApiError(401, []))).toBe("ログインしてください");
+  });
+});
+
+describe("ログインの API", () => {
+  it("POST /api/auth/login に JSON を送り、トークンを返す。Authorization は付けない", async () => {
+    const fetchMock = stubFetch(200, {
+      access_token: "tok-new",
+      token_type: "bearer",
+      expires_in: 1800,
+    });
+    const token = await login("a-editor@example.com", "pw");
+    expect(token).toBe("tok-new");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("/api/auth/login");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      email: "a-editor@example.com",
+      password: "pw",
+    });
+    expect(new Headers(init.headers).has("Authorization")).toBe(false);
+  });
+
+  it("失敗（401）は ApiError にするが、全体の 401 の処理は呼ばない（#15）", async () => {
+    stubFetch(401, { detail: "メールアドレスかパスワードが違います" });
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    const error = await login("a@example.com", "x").catch((e: unknown) => e);
+    expect((error as ApiError).status).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
   });
 });

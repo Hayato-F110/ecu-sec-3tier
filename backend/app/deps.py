@@ -10,12 +10,14 @@
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, Path, Request, status
+from fastapi import Depends, HTTPException, Path, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import Company, Ecu, User
+from app.security import user_id_from_token
 
 SUPPLIER_ROLES = ("supplier_admin", "editor", "approver")
 # PostgreSQL の BIGINT の上限。これを超える番号を DB に渡すとエラー（500）になるので、入口で止める
@@ -34,19 +36,30 @@ def get_db(request: Request) -> Iterator[Session]:
 Db = Annotated[Session, Depends(get_db)]
 
 
+# auto_error=False：ヘッダーがないときも FastAPI の既定の応答にせず、下で同じ 401 を返す
+bearer = HTTPBearer(auto_error=False)
+
+
 def current_user(
     db: Db,
     settings: Annotated[Settings, Depends(get_settings_dep)],
-    x_dev_user_id: Annotated[str | None, Header()] = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> User:
-    """仮の本人確認（Day 6 に JWT へ差し替える）。どの理由で断っても同じ 401 を返す。"""
-    unauthorized = HTTPException(status.HTTP_401_UNAUTHORIZED, detail="ログインが必要です")
-    if not settings.dev_auth_enabled or x_dev_user_id is None:
+    """本人確認（Authorization: Bearer のトークン）。どの理由で断っても同じ 401 を返す。
+
+    期限切れ・署名の誤り・利用者がいない・無効な利用者を区別しない（理由を明かさない）。
+    """
+    unauthorized = HTTPException(
+        status.HTTP_401_UNAUTHORIZED,
+        detail="ログインが必要です",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if credentials is None:
         raise unauthorized
-    # 半角の数字だけ、18桁まで（BIGINT に収まる）。"-1"・全角の数字・空は断る
-    if not (x_dev_user_id.isascii() and x_dev_user_id.isdigit() and len(x_dev_user_id) <= 18):
+    user_id = user_id_from_token(credentials.credentials, settings)
+    if user_id is None:
         raise unauthorized
-    user = db.get(User, int(x_dev_user_id))
+    user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise unauthorized
     return user

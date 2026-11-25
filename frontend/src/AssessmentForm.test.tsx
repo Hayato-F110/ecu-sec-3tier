@@ -53,7 +53,7 @@ const sentBody = (fetchMock: ReturnType<typeof stubFetch>, call: number) => {
   return JSON.parse(init.body as string) as unknown;
 };
 
-const renderForm = () => render(<AssessmentForm userId="5" ecuId={12} />);
+const renderForm = () => render(<AssessmentForm token="5" ecuId={12} />);
 
 describe("対策状況の入力", () => {
   it("項目ごとに状態・根拠・予定日の欄が出て、保存済みの値が入っている", async () => {
@@ -240,7 +240,7 @@ describe("対策状況の入力", () => {
     expect(blank(unsaved).disabled).toBe(false);
   });
 
-  it("保存の途中で仮のユーザー ID を変えたら、前の保存の結果で上書きしない", async () => {
+  it("保存の途中でログインした人が変わったら、前の保存の結果で上書きしない", async () => {
     const user = userEvent.setup();
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200 });
@@ -258,11 +258,11 @@ describe("対策状況の入力", () => {
       "fetch",
       vi.fn<typeof fetch>(() => replies.shift()!()),
     );
-    const { rerender } = render(<AssessmentForm userId="5" ecuId={12} />);
+    const { rerender } = render(<AssessmentForm token="5" ecuId={12} />);
     await user.click(
       await screen.findByRole("button", { name: "下書きを保存" }),
     );
-    rerender(<AssessmentForm userId="7" ecuId={12} />);
+    rerender(<AssessmentForm token="7" ecuId={12} />);
     expect(await screen.findByText("版 4：下書き")).toBeTruthy();
 
     await act(async () => {

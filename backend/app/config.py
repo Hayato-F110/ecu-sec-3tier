@@ -6,12 +6,13 @@ AWS では同じ名前の値を SSM Parameter Store から渡す（Phase 3）。
 
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
 # backend/app/config.py → リポジトリの直下
 REPO_ROOT = Path(__file__).resolve().parents[2]
+MIN_KEY_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -26,9 +27,19 @@ class Settings(BaseSettings):
     # docker compose は 127.0.0.1 で待ち受けているので、それに合わせる
     postgres_host: str = "127.0.0.1"
     postgres_port: int = 5432
-    # 仮の本人確認（ヘッダー X-Dev-User-Id）。Day 6 に JWT へ差し替えるまでの開発用。
-    # 既定は無効：AWS などへ、うっかり有効のまま出さない（無効ならすべての API が 401）
-    dev_auth_enabled: bool = False
+    # トークン（JWT）に署名する鍵。既定の値は置かない（鍵がなければ起動しない）。
+    # HS256 の鍵は 32バイト以上（RFC 7518 3.2：ハッシュの長さ以上）
+    jwt_secret_key: SecretStr
+    # トークンの有効期限（分）。切れたらログインし直す
+    access_token_expire_minutes: int = Field(default=30, ge=1)
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def key_is_long_enough(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value().encode("utf-8")) < MIN_KEY_BYTES:
+            # 値そのものはエラーに出さない
+            raise ValueError(f"JWT_SECRET_KEY は {MIN_KEY_BYTES} バイト以上にしてください")
+        return value
 
     def database_url(self, database: str | None = None) -> URL:
         """接続先。database を渡すと、その DB（テスト用など）に向ける。"""

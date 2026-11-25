@@ -4,74 +4,139 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
-// docs/test-plans/SC3-11.md の #17：ページの切り替え
-const stubApi = () => {
-  const fetchMock = vi.fn<typeof fetch>(async (input) => {
+// docs/test-plans/SC3-11.md の #17、SC3-12.md の #14・#16・#17・#18
+
+const MATRIX = {
+  items: [{ id: 1, code: "SB", title: "セキュアブート" }],
+  rows: [
+    {
+      ecu_id: 1,
+      supplier_id: 100,
+      supplier_name: "架空電装 A 社",
+      ecu_name: "ゲートウェイ ECU",
+      part_no: "DMY-A001",
+      vehicle_model: "架空セダン",
+      version: 1,
+      review_status: "unreviewed",
+      cells: [{ item_id: 1, status: "done" }],
+    },
+  ],
+};
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status });
+
+/** ログインは毎回ちがうトークン（tok-1、tok-2 …）を返す。ほかの API は route で決める */
+const stubApi = (
+  route: (url: string, init?: RequestInit) => Response | Promise<Response>,
+) => {
+  let issued = 0;
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const url = String(input);
-    const body = url.startsWith("/api/matrix") ? { items: [], rows: [] } : [];
-    return new Response(JSON.stringify(body), { status: 200 });
+    if (url === "/api/auth/login") {
+      issued += 1;
+      return json({
+        access_token: `tok-${issued}`,
+        token_type: "bearer",
+        expires_in: 1800,
+      });
+    }
+    return route(url, init);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 };
 
+const okApi = () =>
+  stubApi((url) => json(url.startsWith("/api/matrix") ? MATRIX : []));
+
+const renderAt = (path: string) =>
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <App />
+    </MemoryRouter>,
+  );
+
+const logIn = async () => {
+  fireEvent.change(await screen.findByLabelText("メールアドレス"), {
+    target: { value: "oem-reviewer@example.com" },
+  });
+  fireEvent.change(screen.getByLabelText("パスワード"), {
+    target: { value: "pw" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "ログイン" }));
+};
+
+const authOf = (call: Parameters<typeof fetch>) =>
+  new Headers(call[1]?.headers).get("Authorization");
+
 afterEach(() => {
   vi.unstubAllGlobals();
   sessionStorage.clear();
+  localStorage.clear();
 });
 
-describe("仮のユーザー ID を変えたとき", () => {
-  it("新しい応答が来るまで、前の人のマトリクスを出さない", async () => {
-    sessionStorage.setItem("dev-user-id", "2");
-    const matrix = {
-      items: [{ id: 1, code: "SB", title: "セキュアブート" }],
-      rows: [
-        {
-          ecu_id: 1,
-          supplier_id: 100,
-          supplier_name: "架空電装 A 社",
-          ecu_name: "ゲートウェイ ECU",
-          part_no: "DMY-A001",
-          vehicle_model: "架空セダン",
-          version: 1,
-          review_status: "unreviewed",
-          cells: [{ item_id: 1, status: "done" }],
-        },
-      ],
-    };
-    // 1回目（ID 2）は表を返し、2回目（ID 4）は返事が来ないままにする
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(matrix), { status: 200 }),
-      )
-      .mockImplementation(() => new Promise<Response>(() => {}));
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <MemoryRouter initialEntries={["/matrix"]}>
-        <App />
-      </MemoryRouter>,
-    );
-    expect(await screen.findByText("DMY-A001")).toBeTruthy();
+describe("未ログイン（#14）", () => {
+  it.each(["/", "/matrix", "/ecus/3"])(
+    "%s を開くとログイン画面に移り、API を呼ばない",
+    async (path) => {
+      const fetchMock = okApi();
+      renderAt(path);
+      expect(
+        await screen.findByRole("heading", { name: "ログイン" }),
+      ).toBeTruthy();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(
+        screen.queryByRole("link", { name: "一括確認マトリクス" }),
+      ).toBeNull();
+    },
+  );
 
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "4" } });
-    expect(await screen.findByText("読み込み中…")).toBeTruthy();
-    expect(screen.queryByText("DMY-A001")).toBeNull();
-    expect(screen.queryByRole("table")).toBeNull();
+  it("前の版の sessionStorage の仮のユーザー ID を読まない（#16）", async () => {
+    // 前の版のキー。文字をそのまま書くと、消し残しの検査（backend/tests/test_auth.py）に掛かる
+    sessionStorage.setItem(["dev", "user", "id"].join("-"), "2");
+    const fetchMock = okApi();
+    renderAt("/matrix");
+    expect(
+      await screen.findByRole("heading", { name: "ログイン" }),
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
-describe("ページの切り替え", () => {
-  it("自社 ECU 一覧と一括確認マトリクスを、リンクで行き来できる", async () => {
-    const fetchMock = stubApi();
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <App />
-      </MemoryRouter>,
-    );
+describe("ログインしたあと", () => {
+  it("一覧に移り、以後の API に Authorization: Bearer が付く（#15）", async () => {
+    const fetchMock = okApi();
+    renderAt("/login");
+    await logIn();
     expect(
       await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
     ).toBeTruthy();
+    const ecusCall = fetchMock.mock.calls.find(([u]) => u === "/api/ecus");
+    expect(ecusCall).toBeTruthy();
+    expect(authOf(ecusCall!)).toBe("Bearer tok-1");
+  });
+
+  it("トークンをブラウザの保存場所・Cookie・URL・履歴に書かない（#16）", async () => {
+    okApi();
+    renderAt("/login");
+    await logIn();
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
+    const stored = [
+      ...Object.keys(sessionStorage).map((k) => sessionStorage.getItem(k)),
+      ...Object.keys(localStorage).map((k) => localStorage.getItem(k)),
+      document.cookie,
+      window.location.href,
+      JSON.stringify(window.history.state),
+    ].join(" ");
+    expect(stored).not.toContain("tok-1");
+  });
+
+  it("自社 ECU 一覧と一括確認マトリクスを、リンクで行き来できる（SC3-11 #17）", async () => {
+    const fetchMock = okApi();
+    renderAt("/login");
+    await logIn();
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
 
     fireEvent.click(screen.getByRole("link", { name: "一括確認マトリクス" }));
     expect(
@@ -83,5 +148,77 @@ describe("ページの切り替え", () => {
     expect(
       await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
     ).toBeTruthy();
+  });
+
+  it("API が 401 を返すと、トークンを捨ててログイン画面に移る（#17）", async () => {
+    const fetchMock = stubApi(() =>
+      json({ detail: "ログインが必要です" }, 401),
+    );
+    renderAt("/login");
+    await logIn();
+    // ボタンを押した直後はまだログイン画面なので、401 の知らせが出るまで待つ
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "ログインしてください",
+    );
+    expect(screen.getByRole("heading", { name: "ログイン" })).toBeTruthy();
+    // 一覧の API を、1回目のトークンで呼んでいた
+    expect(
+      fetchMock.mock.calls.some(
+        ([u, init]) =>
+          u === "/api/ecus" && authOf([u, init]) === "Bearer tok-1",
+      ),
+    ).toBe(true);
+    // 捨てたトークンで、ほかの画面を開けない
+    expect(
+      screen.queryByRole("link", { name: "一括確認マトリクス" }),
+    ).toBeNull();
+    const calls = fetchMock.mock.calls.length;
+    await logIn();
+    // 2回目のログインでは新しいトークンを使う（呼ばれるまで待ってから、全部を確かめる）
+    const after = () =>
+      fetchMock.mock.calls
+        .slice(calls)
+        .filter(([u]) => u !== "/api/auth/login");
+    await vi.waitFor(() => expect(after().length).toBeGreaterThan(0));
+    expect(after().every((c) => authOf(c) === "Bearer tok-2")).toBe(true);
+  });
+
+  it("ログアウトでログイン画面に移り、マトリクスを開けなくなる（#17）", async () => {
+    okApi();
+    renderAt("/login");
+    await logIn();
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
+    fireEvent.click(screen.getByRole("button", { name: "ログアウト" }));
+    expect(
+      await screen.findByRole("heading", { name: "ログイン" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("link", { name: "一括確認マトリクス" }),
+    ).toBeNull();
+  });
+});
+
+describe("ログインした人が変わったとき（#18）", () => {
+  it("新しい応答が来るまで、前の人のマトリクスを出さない", async () => {
+    let matrixCalls = 0;
+    // 1回目（tok-1）は表を返し、2回目（tok-2）は返事が来ないままにする
+    stubApi((url) => {
+      if (!url.startsWith("/api/matrix")) return json([]);
+      matrixCalls += 1;
+      return matrixCalls === 1 ? json(MATRIX) : new Promise<Response>(() => {});
+    });
+    renderAt("/login");
+    await logIn();
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
+    fireEvent.click(screen.getByRole("link", { name: "一括確認マトリクス" }));
+    expect(await screen.findByText("DMY-A001")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "ログアウト" }));
+    await logIn();
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
+    fireEvent.click(screen.getByRole("link", { name: "一括確認マトリクス" }));
+    expect(await screen.findByText("読み込み中…")).toBeTruthy();
+    expect(screen.queryByText("DMY-A001")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 });

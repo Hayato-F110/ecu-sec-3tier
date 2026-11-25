@@ -11,15 +11,15 @@ import { ErrorMessage } from "./ErrorMessage";
 
 /** 一括確認マトリクス（メーカー用）。どの版を見せるか・誰が見られるかは API が決める。
  *  画面は受け取った行を、サプライヤ・確認状況で絞って並べるだけ */
-export const Matrix = ({ userId }: { userId: string }) => {
+export const Matrix = ({ token }: { token: string }) => {
   const [view, setView] = useState<MatrixView | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [supplier, setSupplier] = useState(""); // "" は「すべて」
   const [review, setReview] = useState<"" | ReviewStatus>("");
 
   useEffect(() => {
-    let active = true; // 仮のユーザー ID を変えたとき、前の応答で上書きしない
-    getMatrix(userId).then(
+    let active = true; // ログインした人が変わったとき、前の応答で上書きしない
+    getMatrix(token).then(
       (result) => {
         if (!active) return;
         setView(result);
@@ -34,7 +34,7 @@ export const Matrix = ({ userId }: { userId: string }) => {
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [token]);
 
   // 選択肢のサプライヤは、応答の行から作る（重ねない）
   const suppliers = useMemo(() => {

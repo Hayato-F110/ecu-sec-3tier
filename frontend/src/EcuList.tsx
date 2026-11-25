@@ -5,13 +5,13 @@ import { type EcuSummary, listEcus, versionLabel } from "./api";
 import { ErrorMessage } from "./ErrorMessage";
 
 /** 自社 ECU 一覧。どの ECU が見えるかは API が会社で絞り込む（画面では絞らない） */
-export const EcuList = ({ userId }: { userId: string }) => {
+export const EcuList = ({ token }: { token: string }) => {
   const [ecus, setEcus] = useState<EcuSummary[] | null>(null);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
-    let active = true; // 仮のユーザー ID を変えたとき、前の応答で上書きしない
-    listEcus(userId).then(
+    let active = true; // ログインした人が変わったとき、前の応答で上書きしない
+    listEcus(token).then(
       (result) => {
         if (!active) return;
         setEcus(result);
@@ -26,7 +26,7 @@ export const EcuList = ({ userId }: { userId: string }) => {
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [token]);
 
   if (error !== null) return <ErrorMessage error={error} />;
   if (ecus === null) return <p>読み込み中…</p>;

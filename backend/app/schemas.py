@@ -116,3 +116,22 @@ class MatrixRow(BaseModel):
 class MatrixView(BaseModel):
     items: list[MatrixItem]
     rows: list[MatrixRow]
+
+
+# ---- ログイン（SC3-12） ----
+
+
+class LoginIn(BaseModel):
+    # 知らない項目（role など）は 422。送られた値は応答に返さない（app.main の validation_error）
+    model_config = ConfigDict(extra="forbid")
+
+    # 長さの上限：メールアドレスは users.email と同じ 254。パスワードは大きな本文で遅くしないため
+    email: Annotated[str, Field(max_length=254), AfterValidator(storable_text)]
+    password: Annotated[str, Field(max_length=1024), AfterValidator(storable_text)]
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    # 種類の名前で、秘密の値ではない
+    token_type: Literal["bearer"] = "bearer"  # noqa: S105
+    expires_in: int  # 秒

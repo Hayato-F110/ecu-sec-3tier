@@ -79,7 +79,7 @@ const stubFetch = (status: number, body: unknown) => {
 const renderMatrix = () =>
   render(
     <MemoryRouter>
-      <Matrix userId="2" />
+      <Matrix token="2" />
     </MemoryRouter>,
   );
 
@@ -168,7 +168,7 @@ describe("一括確認マトリクス", () => {
 
   it.each([
     [403, "この操作の権限がありません"],
-    [401, "仮のユーザー ID を確かめてください"],
+    [401, "ログインしてください"],
     [500, "API の呼び出しに失敗しました（500）"],
   ])(
     "#15 API が %i なら決まった文言を出し、表を出さない",

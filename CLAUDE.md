@@ -72,7 +72,7 @@
 
 - **1ストーリーの進め方**（計画書 第6章）：Plan モードで設計案を出す → オーナーが承認する → **テストを先に書く**（実装の前に流して落ちる＝赤を確かめる）→ 実装する → 差分と検査の結果を確かめてからコミットする。手順は `/story`
 - 作業はすべて Jira の課題に対応させる。フェーズ＝エピック、計画書 第4章の1日分＝ストーリー（**途中で見つけた課題の種類**：作ったものが決まりどおりに動かない不具合＝「バグ」、守りの強化・道具（Hook など）・テストの改善・あとの Day への申し送り＝「タスク」。2026-11-25 にオーナーが決め、SC3-25〜35 も直した）、スプリント＝3日（約15時間）。ブランチ `feature/SC3-xx-短い説明`、コミットの先頭に `SC3-xx`（どの課題にも当たらない作業は、その日のストーリーの課題）。Jira のプロジェクトは「ECUセキュリティ対策管理」（キー SC3、チーム管理対象のスクラム）。エピックはフェーズ（SC3-1・3〜7）、ストーリーは Day 1〜18（SC3-2・8〜24）。課題キー・欄の ID・完了の遷移の ID は `.claude/hooks/project.json`
-- **途中で見つけたことは、今のスプリントに入れずバックログへ**。今のスプリントに入れるのはオーナーが決めたときだけ。仕組み：Hook `guard-jira-fields`（作るときのポイント・期限・開始日の抜けと、スプリントへ入れる操作を止める）
+- **途中で見つけたことは、今のスプリントに入れずバックログへ**。今のスプリントに入れるのはオーナーが決めたときだけ。**課題を作ったら、同じ返答で「どのスプリントに入れるのがおすすめか」と理由を伝える**（関係する Day・ゴール・期限。2026-11-25 にオーナーが決めた）。仕組み：Hook `guard-jira-fields`（作るときのポイント・期限・開始日の抜けと、スプリントへ入れる操作を止める）
 - **進め方の判断（スプリント・バックログ・ふりかえり・見積もり。おすすめを含む）は、スクラムガイド 2020（https://scrumguides.org/scrum-guide.html）の該当の節を根拠に含め、節の名前を添える**。計画書・CLAUDE.md の決まりと食い違うときは、その違いも書く（2026-11-25 にオーナーが決めた。開始したスプリントに課題を足すおすすめを、ガイドを確かめずに出したため）
 - **課題を完了にする前に**：`getJiraIssue` で完了条件を読み直し、条件ごとに証拠（PR・CI の実行・ファイル:行）を付けた表（見出しに「完了条件」「証拠」の列）を課題のコメントに書いてから「完了」に移す。未達が1つでもあれば完了にしない。仕組み：Hook `guard-done-evidence`（この会話でその課題に表のコメントがないか、表に「未達」があれば止める）。毎日の終わりに実際の作業時間を記録する
 - **引き継ぎ（`docs/handoff.md`）は今の状態だけにする**。前の状態は Git の履歴にある
@@ -101,7 +101,8 @@
 - DB：テーブルの作成・更新 `cd backend && uv run alembic upgrade head`、ダミーデータ `uv run python -m app.seed`（データがあれば何もしない）。テーブルを変えたら `uv run alembic revision --autogenerate -m "説明"` で変更履歴を作り、中身を読んでから使う
 - 画面：`cd frontend && npm test`（Vitest。`fetch` を差し替えて API の応答を作る）、`npm run lint`（ESLint と Prettier）、`npm run build`（型の検査とビルド）。依存を入れるのは `npm ci`
 - 画面のコンテナ（nginx）：`node --test tests/web/`（3層が動いているときだけ確かめ、止まっていれば飛ばす。`nginx.conf` を変えたら `docker compose up -d --build web` のあとに流す）
-- 画面を開く：`docker compose up -d --build` のあと `http://127.0.0.1:8080`。仮のユーザー ID で試すには `.env` の `DEV_AUTH_ENABLED=true` が要る（試し終わったら false）
+- 画面を開く：`docker compose up -d --build` のあと `http://127.0.0.1:8080` でログイン（メールアドレスは `a-editor@example.com`・`oem-reviewer@example.com` など、パスワードは `.env` の `SEED_USER_PASSWORD`）。`.env` には `JWT_SECRET_KEY`（32バイト以上）が必須。データがすでにある DB にパスワードを入れるのは `docker compose exec api python -m app.seed --set-passwords`
+- 画面のコンテナのテストで、ログインして呼ぶ確かめも流すには、`SEED_USER_PASSWORD` を環境変数で渡す（渡さなければその確かめだけ飛ばす）
 - インフラ：`terraform -chdir=infra/classic fmt -check`・`validate`・`plan`
 - 3層の起動：`docker compose up -d`（止めるのは `docker compose down`。`-v` はデータを消すので確認が要る）
 - pytest・docker compose のビルド・terraform の plan/apply/destroy は長い処理なので、`run_in_background: true` で動かす（Hook `guard-long-foreground` が止める）。検査の出力をパイプ（`|`）につながない
