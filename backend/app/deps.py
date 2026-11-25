@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import Ecu, User
+from app.models import Company, Ecu, User
 
 SUPPLIER_ROLES = ("supplier_admin", "editor", "approver")
 # PostgreSQL の BIGINT の上限。これを超える番号を DB に渡すとエラー（500）になるので、入口で止める
@@ -60,6 +60,24 @@ def supplier_user(user: Annotated[User, Depends(current_user)]) -> User:
 
 
 SupplierUser = Annotated[User, Depends(supplier_user)]
+
+OEM_ROLES = ("sys_admin", "reviewer")
+
+
+def oem_user(user: Annotated[User, Depends(current_user)], db: Db) -> User:
+    """メーカー用の API。メーカーの会社のシステム管理者・確認者だけ。
+
+    役割に加えて会社の種類も確かめる（役割と会社の種類が合うことは DB の制約で守っていない。
+    サプライヤの会社に「確認者」ができても、全社のデータを読ませない）。
+    URL に番号のない API なので、隠す相手がなく、404 ではなく 403（docs/test-plans/SC3-11.md）。
+    """
+    company = db.get(Company, user.company_id)
+    if user.role not in OEM_ROLES or company is None or company.type != "oem":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="この操作はできません")
+    return user
+
+
+OemUser = Annotated[User, Depends(oem_user)]
 EcuId = Annotated[int, Path(ge=1, le=BIGINT_MAX)]
 
 

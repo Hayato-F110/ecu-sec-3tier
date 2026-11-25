@@ -44,7 +44,13 @@ describe("nginx（frontend/nginx.conf）", () => {
     assert.equal(r.headers.get("x-content-type-options"), "nosniff");
   });
 
-  for (const path of ["/", "/ecus/3"]) {
+  check("/api/matrix をヘッダーなしで呼ぶと 401（nginx が API へ中継している）", async () => {
+    const r = await fetch(`${BASE}/api/matrix`);
+    assert.equal(r.status, 401);
+    assert.ok(r.headers.get("content-security-policy")?.startsWith(CSP_START));
+  });
+
+  for (const path of ["/", "/ecus/3", "/matrix"]) {
     check(`${path} は index.html を毎回確かめさせ（no-cache）、守りのヘッダーも付く`, async () => {
       const r = await fetch(`${BASE}${path}`);
       assert.equal(r.status, 200);
