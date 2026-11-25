@@ -49,8 +49,9 @@ class Settings(DbSettings):
     # トークン（JWT）に署名する鍵。既定の値は置かない（鍵がなければ起動しない）。
     # HS256 の鍵は 32バイト以上（RFC 7518 3.2：ハッシュの長さ以上）
     jwt_secret_key: SecretStr
-    # トークンの有効期限（分）。切れたらログインし直す
-    access_token_expire_minutes: int = Field(default=30, ge=1)
+    # トークンの有効期限（分）。切れたらログインし直す。
+    # 上限は1日：取り消しの仕組みがないので長くしない（大きすぎる値は日時の計算で 500 にもなる）
+    access_token_expire_minutes: int = Field(default=30, ge=1, le=1440)
 
     @field_validator("jwt_secret_key")
     @classmethod

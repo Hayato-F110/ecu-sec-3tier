@@ -92,9 +92,13 @@ const detailsOf = (body: unknown): string[] => {
 };
 
 /** ログインの API 以外が 401 を返したときの処理（App がトークンを捨てて /login に移す） */
-let onUnauthorized: (() => void) | null = null;
+let onUnauthorized: ((sentToken: string) => void) | null = null;
 
-export const setUnauthorizedHandler = (handler: (() => void) | null) => {
+/** 401 の処理を登録する。処理には、401 になった要求で送ったトークンを渡す
+ *  （ログインし直したあとに届いた、古いトークンの要求の 401 を見分けるため） */
+export const setUnauthorizedHandler = (
+  handler: ((sentToken: string) => void) | null,
+) => {
   onUnauthorized = handler;
 };
 
@@ -119,20 +123,33 @@ const request = async <T>(
   headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(path, { ...init, headers });
   // 期限切れ・無効になった利用者など。トークンを捨てて、ログインし直してもらう
-  if (response.status === 401) onUnauthorized?.();
+  if (response.status === 401) onUnauthorized?.(token);
   return readResponse<T>(response);
 };
 
 /** ログイン。成功ならトークンを返す。失敗の 401 は「ログインし直し」の処理を呼ばない
  *  （ログイン画面のまま、違うことだけを伝える） */
-export const login = async (email: string, password: string) => {
+/** ログインした人。メモリーだけに置く（App） */
+export type Session = { token: string; email: string; role: string };
+
+/** メーカーの役割。ログインのあとはマトリクスへ（自社 ECU 一覧はサプライヤ用で、メーカーには 403） */
+export const OEM_ROLES = new Set(["sys_admin", "reviewer"]);
+
+export const homeOf = (role: string) => (OEM_ROLES.has(role) ? "/matrix" : "/");
+
+export const login = async (
+  email: string,
+  password: string,
+): Promise<Session> => {
   const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  const body = await readResponse<{ access_token: string }>(response);
-  return body.access_token;
+  const body = await readResponse<{ access_token: string; role: string }>(
+    response,
+  );
+  return { token: body.access_token, email, role: body.role };
 };
 
 export const listEcus = (token: string) =>

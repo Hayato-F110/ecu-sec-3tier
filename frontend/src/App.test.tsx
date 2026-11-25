@@ -35,10 +35,12 @@ const stubApi = (
     const url = String(input);
     if (url === "/api/auth/login") {
       issued += 1;
+      const { email } = JSON.parse(String(init?.body)) as { email: string };
       return json({
         access_token: `tok-${issued}`,
         token_type: "bearer",
         expires_in: 1800,
+        role: email.startsWith("oem-") ? "reviewer" : "editor",
       });
     }
     return route(url, init);
@@ -57,9 +59,9 @@ const renderAt = (path: string) =>
     </MemoryRouter>,
   );
 
-const logIn = async () => {
+const logIn = async (email = "a-editor@example.com") => {
   fireEvent.change(await screen.findByLabelText("メールアドレス"), {
-    target: { value: "oem-reviewer@example.com" },
+    target: { value: email },
   });
   fireEvent.change(screen.getByLabelText("パスワード"), {
     target: { value: "pw" },
@@ -244,5 +246,73 @@ describe("ログインした人が変わったとき（#18）", () => {
     expect(await screen.findByText("読み込み中…")).toBeTruthy();
     expect(screen.queryByText("DMY-A001")).toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+});
+
+describe("2回目のレビューの直し", () => {
+  it("メーカーの人はログインのあとマトリクスに移る（自社 ECU 一覧は 403 のため）", async () => {
+    const fetchMock = okApi();
+    renderAt("/login");
+    await logIn("oem-reviewer@example.com");
+    expect(
+      await screen.findByRole("heading", { name: "一括確認マトリクス" }),
+    ).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([u]) => u === "/api/ecus")).toBe(false);
+  });
+
+  it("ログインした人のメールアドレスを上に出す", async () => {
+    okApi();
+    renderAt("/login");
+    await logIn();
+    expect(
+      await screen.findByText("ログイン中：a-editor@example.com"),
+    ).toBeTruthy();
+  });
+
+  it("ログインし直したあとに届いた、古いトークンの要求の 401 では追い出さない", async () => {
+    // 1回目のトークンの一覧の要求は、あとで 401 を返す（それまで返事を止めておく）
+    let releaseOld: (r: Response) => void = () => {};
+    stubApi((url, init) => {
+      const auth = new Headers(init?.headers).get("Authorization");
+      if (url === "/api/ecus" && auth === "Bearer tok-1")
+        return new Promise<Response>((resolve) => {
+          releaseOld = resolve;
+        });
+      if (url === "/api/matrix" && auth === "Bearer tok-1")
+        return json({ detail: "ログインが必要です" }, 401);
+      return json(url.startsWith("/api/matrix") ? MATRIX : []);
+    });
+    renderAt("/login");
+    await logIn();
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
+    // マトリクスの 401 でログイン画面へ → 同じ人でログインし直す（tok-2）
+    fireEvent.click(screen.getByRole("link", { name: "一括確認マトリクス" }));
+    await screen.findByRole("alert");
+    await logIn();
+    expect(await screen.findByText("DMY-A001")).toBeTruthy();
+    // 止めていた古い要求（tok-1）の 401 がいま届く
+    releaseOld(json({ detail: "ログインが必要です" }, 401));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole("heading", { name: "ログイン" })).toBeNull();
+    expect(screen.getByText("DMY-A001")).toBeTruthy();
+  });
+
+  it("401 のあと別の人がログインしたら、前の人のページではなく、その人の最初のページへ", async () => {
+    let matrixCalls = 0;
+    stubApi((url) => {
+      if (!url.startsWith("/api/matrix")) return json([]);
+      matrixCalls += 1;
+      return matrixCalls === 1
+        ? json({ detail: "ログインが必要です" }, 401)
+        : json(MATRIX);
+    });
+    renderAt("/login");
+    await logIn("oem-reviewer@example.com");
+    // マトリクスで 401 → 別の人（サプライヤの入力者）がログイン
+    await screen.findByRole("alert");
+    await logIn("a-editor@example.com");
+    expect(
+      await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
+    ).toBeTruthy();
   });
 });

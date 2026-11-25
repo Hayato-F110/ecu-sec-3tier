@@ -1,16 +1,16 @@
 import { type FormEvent, useState } from "react";
 
-import { ApiError, login, messageOf } from "./api";
+import { ApiError, login, messageOf, type Session } from "./api";
 
 const FAILED = "メールアドレスかパスワードが違います";
 
-/** ログイン画面。成功したらトークンを onLogin に渡す（保存は App のメモリーだけ）。
+/** ログイン画面。成功したらログインした人（トークンを含む）を onLogin に渡す（保存は App のメモリーだけ）。
  *  notice は、401 でここに戻ってきたときの知らせ（「ログインしてください」） */
 export const Login = ({
   onLogin,
   notice,
 }: {
-  onLogin: (token: string) => void;
+  onLogin: (session: Session) => void;
   notice: string | null;
 }) => {
   const [email, setEmail] = useState("");

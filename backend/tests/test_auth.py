@@ -230,3 +230,17 @@ def test_env_example_has_no_usable_jwt_key() -> None:
     lines = (REPO_ROOT / "env.example").read_text(encoding="utf-8").splitlines()
     values = [line.split("=", 1)[1] for line in lines if line.startswith("JWT_SECRET_KEY=")]
     assert values == [""]
+
+
+# ---- 2回目のレビューの直し ----
+
+
+@pytest.mark.parametrize("minutes", [0, 1441, 99_999_999_999])
+def test_expiry_minutes_out_of_range_is_rejected(minutes: int) -> None:
+    """有効期限は 1〜1440分。大きすぎる値はログインの日時の計算で 500 になるので、起動で断る"""
+    with pytest.raises(ValidationError):
+        settings_with(jwt_secret_key="a" * 32, access_token_expire_minutes=minutes)
+
+
+def test_expiry_minutes_of_one_day_is_ok() -> None:
+    assert settings_with(jwt_secret_key="a" * 32, access_token_expire_minutes=1440)

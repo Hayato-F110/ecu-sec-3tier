@@ -48,4 +48,5 @@ def login(
     return TokenOut(
         access_token=security.create_access_token(user.id, settings),
         expires_in=settings.access_token_expire_minutes * 60,
+        role=user.role,
     )

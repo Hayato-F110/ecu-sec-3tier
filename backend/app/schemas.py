@@ -135,3 +135,6 @@ class TokenOut(BaseModel):
     # 種類の名前で、秘密の値ではない
     token_type: Literal["bearer"] = "bearer"  # noqa: S105
     expires_in: int  # 秒
+    # 画面がログインのあとに移る先を選ぶため（メーカーはマトリクス、サプライヤは自社 ECU 一覧）。
+    # 権限の判断には使わない（API が毎回 DB の役割で判断する）
+    role: str

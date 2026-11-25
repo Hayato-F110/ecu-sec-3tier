@@ -55,6 +55,7 @@ def test_every_role_can_log_in(with_passwords: Api, email: str) -> None:
     body = res.json()
     minutes = get_settings().access_token_expire_minutes
     assert body["token_type"] == "bearer"
+    assert body["role"] == api.user(email).role  # 画面の移動先を選ぶため
     assert body["expires_in"] == minutes * 60
     assert jwt.get_unverified_header(body["access_token"])["alg"] == "HS256"
     claims = jwt.decode(body["access_token"], TEST_JWT_SECRET_KEY, algorithms=["HS256"])

@@ -121,6 +121,8 @@ describe("API を呼ぶ関数", () => {
     const error = await listEcus("tok-5").catch((e: unknown) => e);
     expect((error as ApiError).status).toBe(401);
     expect(handler).toHaveBeenCalledTimes(1);
+    // どのトークンの要求が 401 になったかを渡す（古いトークンの 401 を見分けるため）
+    expect(handler).toHaveBeenCalledWith("tok-5");
   });
 
   it.each([403, 404, 422])("%i では 401 の処理を呼ばない", async (status) => {
@@ -142,9 +144,14 @@ describe("ログインの API", () => {
       access_token: "tok-new",
       token_type: "bearer",
       expires_in: 1800,
+      role: "editor",
     });
-    const token = await login("a-editor@example.com", "pw");
-    expect(token).toBe("tok-new");
+    const session = await login("a-editor@example.com", "pw");
+    expect(session).toEqual({
+      token: "tok-new",
+      email: "a-editor@example.com",
+      role: "editor",
+    });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [
       string,
       RequestInit,

@@ -9,7 +9,7 @@ import {
   useParams,
 } from "react-router";
 
-import { setUnauthorizedHandler } from "./api";
+import { homeOf, type Session, setUnauthorizedHandler } from "./api";
 import { AssessmentForm } from "./AssessmentForm";
 import { EcuList } from "./EcuList";
 import { Login } from "./Login";
@@ -37,22 +37,37 @@ const AssessmentPage = ({ token }: { token: string }) => {
 export const App = () => {
   // トークンはこの部品の状態（メモリー）だけに置く。sessionStorage・localStorage・Cookie には
   // 書かない（画面に XSS があっても、保存場所から盗まれない。代わりに再読み込みでログインし直す）
-  const [token, setToken] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // 401 でログイン画面に移ったときの元のページ。ログインし直したらそこへ戻す
-  const [returnTo, setReturnTo] = useState("/");
+  // 401 でログイン画面に移ったときの元のページと、そのときの人。
+  // 同じ人がログインし直したときだけ、そのページへ戻す（別の人に前の人のページを見せない）
+  const [returnTo, setReturnTo] = useState<{
+    email: string;
+    path: string;
+  } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const here = useRef(location.pathname);
+  const current = useRef<Session | null>(null);
   useEffect(() => {
     here.current = location.pathname;
-  }, [location.pathname]);
+    current.current = session;
+  }, [location.pathname, session]);
 
   useEffect(() => {
-    // API が 401 を返したら（期限切れ・無効になった利用者など）、トークンを捨ててログインし直す
-    setUnauthorizedHandler(() => {
-      setReturnTo(here.current === "/login" ? "/" : here.current);
-      setToken(null);
+    // API が 401 を返したら（期限切れ・無効になった利用者など）、トークンを捨ててログインし直す。
+    // ただし、ログインし直す前の古いトークンで送った要求の 401 なら何もしない
+    // （遅れて届いた 401 で、新しくログインした人を追い出さない）
+    setUnauthorizedHandler((sentToken) => {
+      const now = current.current;
+      if (now === null || now.token !== sentToken) return;
+      setReturnTo(
+        here.current === "/login"
+          ? null
+          : { email: now.email, path: here.current },
+      );
+      current.current = null;
+      setSession(null);
       setNotice("ログインしてください");
       navigate("/login", { replace: true });
     });
@@ -60,20 +75,22 @@ export const App = () => {
   }, [navigate]);
 
   // 画面の移動はしない：ログイン済みの画面で /login を開いている状態になり、下の
-  // <Navigate to={returnTo}> が元のページ（ふつうは一覧）へ移す
-  const onLogin = (newToken: string) => {
-    setToken(newToken);
+  // <Navigate> が移る先（元のページか、役割ごとの最初のページ）へ移す
+  const onLogin = (next: Session) => {
+    current.current = next;
+    setSession(next);
     setNotice(null);
   };
 
   const logout = () => {
-    setToken(null);
+    current.current = null;
+    setSession(null);
     setNotice(null);
-    setReturnTo("/");
+    setReturnTo(null);
     navigate("/login", { replace: true });
   };
 
-  if (token === null)
+  if (session === null)
     return (
       <>
         <header>
@@ -92,10 +109,16 @@ export const App = () => {
       </>
     );
 
+  const { token, email } = session;
+  const sameUser =
+    returnTo !== null && returnTo.email.toLowerCase() === email.toLowerCase();
+  const afterLogin = sameUser ? returnTo.path : homeOf(session.role);
+
   return (
     <>
       <header>
         <h1>ECU セキュリティ対策状況</h1>
+        <p>ログイン中：{email}</p>
         <nav>
           <Link to="/">自社 ECU 一覧</Link>
           {" ｜ "}
@@ -131,8 +154,8 @@ export const App = () => {
               </>
             }
           />
-          {/* ログイン済みで /login を開いたら、元のページ（401 の前のページ。ふだんは一覧）へ */}
-          <Route path="/login" element={<Navigate to={returnTo} replace />} />
+          {/* ログイン済みで /login を開いたら、同じ人の 401 の前のページ、なければ役割ごとの最初のページへ */}
+          <Route path="/login" element={<Navigate to={afterLogin} replace />} />
           <Route path="*" element={<p role="alert">見つかりません</p>} />
         </Routes>
       </main>

@@ -35,11 +35,18 @@ describe("ログイン画面", () => {
       access_token: "tok-9",
       token_type: "bearer",
       expires_in: 1800,
+      role: "editor",
     });
     const onLogin = vi.fn();
     render(<Login onLogin={onLogin} notice={null} />);
     fill("a-editor@example.com", "pw");
-    await vi.waitFor(() => expect(onLogin).toHaveBeenCalledWith("tok-9"));
+    await vi.waitFor(() =>
+      expect(onLogin).toHaveBeenCalledWith({
+        token: "tok-9",
+        email: "a-editor@example.com",
+        role: "editor",
+      }),
+    );
   });
 
   it("失敗すると決まった文言を出し、パスワードの欄を空にする。401 の全体の処理は呼ばない", async () => {
