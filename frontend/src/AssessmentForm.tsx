@@ -73,10 +73,10 @@ const Notice = ({ view }: { view: AssessmentView }) => {
 
 /** 対策状況の入力。項目ごとに状態・根拠・対応予定日を入れ、下書きとして保存する */
 export const AssessmentForm = ({
-  userId,
+  token,
   ecuId,
 }: {
-  userId: string;
+  token: string;
   ecuId: number;
 }) => {
   const [view, setView] = useState<AssessmentView | null>(null);
@@ -84,7 +84,7 @@ export const AssessmentForm = ({
   const [loadError, setLoadError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   // 保存の結果は「どのユーザー・ECU の保存か」と組で持ち、今の組と同じときだけ出す
-  const target = `${userId}:${ecuId}`;
+  const target = `${token}:${ecuId}`;
   const [savedFor, setSavedFor] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<{
     target: string;
@@ -97,8 +97,8 @@ export const AssessmentForm = ({
   }, [target]);
 
   useEffect(() => {
-    let active = true; // ECU・仮のユーザー ID を変えたとき、前の応答で上書きしない
-    getAssessment(userId, ecuId).then(
+    let active = true; // ECU・ログインした人が変わったとき、前の応答で上書きしない
+    getAssessment(token, ecuId).then(
       (result) => {
         if (!active) return;
         setView(result);
@@ -114,7 +114,7 @@ export const AssessmentForm = ({
     return () => {
       active = false;
     };
-  }, [userId, ecuId]);
+  }, [token, ecuId]);
 
   if (loadError !== null) return <ErrorMessage error={loadError} />;
   if (view === null) return <p>読み込み中…</p>;
@@ -135,7 +135,7 @@ export const AssessmentForm = ({
     setSaveError(null);
     setSavedFor(null);
     try {
-      const result = await saveDraft(userId, ecuId, entries);
+      const result = await saveDraft(token, ecuId, entries);
       if (currentTarget.current !== sentFor) return;
       setView(result);
       setRows(rowsOf(result));

@@ -1,20 +1,27 @@
 """ダミーデータの投入。すべて架空（実在の会社・ECU・対策の情報は含まない）。
 
-使い方（backend で）：uv run python -m app.seed
+使い方（backend で）：
+- uv run python -m app.seed：ダミーデータを入れる
+- uv run python -m app.seed --set-passwords：今ある全員のパスワードのハッシュだけを入れ直す
+- パスワードは環境変数 SEED_USER_PASSWORD（.env）。なければ全員「!」（ログインできない印）。
+  平文のパスワードはリポジトリにも DB にも置かない（DB には bcrypt のハッシュだけ）
 - 乱数の種を固定しているので、何度作り直しても同じデータになる
 - 会社が1件でもあれば何もしない（2回流しても増えない）
-- パスワードは Day 6（bcrypt）まで「!」（ログインできない印）。平文のパスワードを置かない
 - メールは example.com（例示専用に予約されたドメイン）、IP は 192.0.2.0/24（文書用に予約された範囲）
 """
 
+import argparse
 import random
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from pydantic import SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import REPO_ROOT
 from app.models import (
     Assessment,
     AssessmentEntry,
@@ -26,6 +33,7 @@ from app.models import (
     MeasureItem,
     User,
 )
+from app.security import MAX_PASSWORD_BYTES, hash_password
 
 SEED = 2026
 # パスワードではなく「ログインできない」印
@@ -89,19 +97,24 @@ class Clock:
         return self.now
 
 
-def new_user(company: Company, prefix: str, role: str) -> User:
+def new_user(company: Company, prefix: str, role: str, password_hash: str) -> User:
     return User(
         company_id=company.id,
         email=f"{prefix}-{role}@example.com",
-        password_hash=LOCKED_PASSWORD,
+        password_hash=password_hash,
         role=role,
     )
 
 
-def seed(session: Session) -> bool:
-    """ダミーデータを入れる。入れたら True、すでにデータがあれば何もせず False。"""
+def seed(session: Session, password: str | None = None) -> bool:
+    """ダミーデータを入れる。入れたら True、すでにデータがあれば何もせず False。
+
+    password があれば全員にそのハッシュ、なければ全員「!」（ログインできない）。
+    """
     if session.scalar(select(func.count()).select_from(Company)):
         return False
+    # bcrypt はわざと遅い（1回 0.2 秒ほど）。全員分を計算せず、1回だけ計算して使い回す
+    hashed = hash_password(password) if password else LOCKED_PASSWORD
 
     # 暗号用ではない。毎回同じ並びにするため
     rng = random.Random(SEED)  # noqa: S311
@@ -110,8 +123,8 @@ def seed(session: Session) -> bool:
     oem = Company(name="架空自動車 株式会社", type="oem")
     session.add(oem)
     session.flush()
-    oem_admin = new_user(oem, "oem", "sys_admin")
-    reviewer = new_user(oem, "oem", "reviewer")
+    oem_admin = new_user(oem, "oem", "sys_admin", hashed)
+    reviewer = new_user(oem, "oem", "reviewer", hashed)
     session.add_all([oem_admin, reviewer])
 
     items = [
@@ -127,9 +140,9 @@ def seed(session: Session) -> bool:
         session.flush()
         su = SupplierUsers(
             company,
-            new_user(company, letter, "supplier_admin"),
-            new_user(company, letter, "editor"),
-            new_user(company, letter, "approver"),
+            new_user(company, letter, "supplier_admin", hashed),
+            new_user(company, letter, "editor", hashed),
+            new_user(company, letter, "approver", hashed),
         )
         session.add_all([su.admin, su.editor, su.approver])
         suppliers.append(su)
@@ -306,13 +319,54 @@ def audit(session: Session, user: User, action: str, target: str, at: datetime |
     )
 
 
+def set_passwords(session: Session, password: str) -> int:
+    """今ある全員のパスワードのハッシュだけを入れ直す（ほかの列は変えない）。変えた人数を返す。
+
+    データを消さずに（docker compose down -v なしで）ログインできるようにするため。
+    """
+    hashed = hash_password(password)
+    users = list(session.scalars(select(User)))
+    for user in users:
+        user.password_hash = hashed
+    session.flush()
+    return len(users)
+
+
+class SeedSettings(BaseSettings):
+    """ダミーデータの利用者のパスワード。main() だけで読む（テストは .env に左右されない）。"""
+
+    model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore")
+    seed_user_password: SecretStr | None = None
+
+
 def main() -> None:
     from app.db import make_engine
 
+    parser = argparse.ArgumentParser(description="ダミーデータ")
+    parser.add_argument(
+        "--set-passwords",
+        action="store_true",
+        help="今ある全員のパスワードのハッシュだけを SEED_USER_PASSWORD で入れ直す",
+    )
+    args = parser.parse_args()
+    # .env か環境変数からだけ受け取る。コマンドの引数では受け取らない
+    # （引数はシェルの履歴やプロセスの一覧に残るため）
+    secret = SeedSettings().seed_user_password
+    password = (secret.get_secret_value() if secret else "") or None  # 空は「なし」
+    if args.set_passwords and password is None:
+        raise SystemExit("SEED_USER_PASSWORD が空です（.env に入れてください）")
+    if password is not None and len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise SystemExit(f"SEED_USER_PASSWORD は {MAX_PASSWORD_BYTES} バイトまでにしてください")
+
     engine = make_engine()
     with Session(engine) as session, session.begin():
-        inserted = seed(session)
-    print("ダミーデータを入れた" if inserted else "データがすでにあるので何もしなかった")
+        if args.set_passwords:
+            count = set_passwords(session, password)  # pyright: ignore[reportArgumentType]
+            message = f"{count} 人のパスワードを入れ直した"
+        else:
+            inserted = seed(session, password)
+            message = "ダミーデータを入れた" if inserted else "データがすでにあるので何もしなかった"
+    print(message)
     engine.dispose()
 
 

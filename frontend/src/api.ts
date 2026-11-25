@@ -91,15 +91,19 @@ const detailsOf = (body: unknown): string[] => {
   );
 };
 
-const request = async <T>(
-  userId: string,
-  path: string,
-  init: RequestInit = {},
-): Promise<T> => {
-  const headers = new Headers(init.headers);
-  // 仮の本人確認（Day 6 で JWT に置き換える）。API 側で無効なら、付けても 401 になる
-  if (userId !== "") headers.set("X-Dev-User-Id", userId);
-  const response = await fetch(path, { ...init, headers });
+/** ログインの API 以外が 401 を返したときの処理（App がトークンを捨てて /login に移す） */
+let onUnauthorized: ((sentToken: string) => void) | null = null;
+
+/** 401 の処理を登録する。処理には、401 になった要求で送ったトークンを渡す
+ *  （ログインし直したあとに届いた、古いトークンの要求の 401 を見分けるため） */
+export const setUnauthorizedHandler = (
+  handler: ((sentToken: string) => void) | null,
+) => {
+  onUnauthorized = handler;
+};
+
+/** 応答を読む。失敗なら ApiError。JSON でない本文でも落ちない */
+const readResponse = async <T>(response: Response): Promise<T> => {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok)
     throw new ApiError(
@@ -109,17 +113,56 @@ const request = async <T>(
   return body as T;
 };
 
-export const listEcus = (userId: string) =>
-  request<EcuSummary[]>(userId, "/api/ecus");
+/** ログインした人として API を呼ぶ。トークンは Authorization: Bearer で送る */
+const request = async <T>(
+  token: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<T> => {
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(path, { ...init, headers });
+  // 期限切れ・無効になった利用者など。トークンを捨てて、ログインし直してもらう
+  if (response.status === 401) onUnauthorized?.(token);
+  return readResponse<T>(response);
+};
 
-export const getMatrix = (userId: string) =>
-  request<MatrixView>(userId, "/api/matrix");
+/** ログイン。成功ならトークンを返す。失敗の 401 は「ログインし直し」の処理を呼ばない
+ *  （ログイン画面のまま、違うことだけを伝える） */
+/** ログインした人。メモリーだけに置く（App） */
+export type Session = { token: string; email: string; role: string };
 
-export const getAssessment = (userId: string, ecuId: number) =>
-  request<AssessmentView>(userId, `/api/ecus/${ecuId}/assessment`);
+/** メーカーの役割。ログインのあとはマトリクスへ（自社 ECU 一覧はサプライヤ用で、メーカーには 403） */
+export const OEM_ROLES = new Set(["sys_admin", "reviewer"]);
 
-export const saveDraft = (userId: string, ecuId: number, entries: EntryIn[]) =>
-  request<AssessmentView>(userId, `/api/ecus/${ecuId}/draft`, {
+export const homeOf = (role: string) => (OEM_ROLES.has(role) ? "/matrix" : "/");
+
+export const login = async (
+  email: string,
+  password: string,
+): Promise<Session> => {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const body = await readResponse<{ access_token: string; role: string }>(
+    response,
+  );
+  return { token: body.access_token, email, role: body.role };
+};
+
+export const listEcus = (token: string) =>
+  request<EcuSummary[]>(token, "/api/ecus");
+
+export const getMatrix = (token: string) =>
+  request<MatrixView>(token, "/api/matrix");
+
+export const getAssessment = (token: string, ecuId: number) =>
+  request<AssessmentView>(token, `/api/ecus/${ecuId}/assessment`);
+
+export const saveDraft = (token: string, ecuId: number, entries: EntryIn[]) =>
+  request<AssessmentView>(token, `/api/ecus/${ecuId}/draft`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ entries }),
@@ -131,7 +174,7 @@ export const messageOf = (error: unknown): string => {
     return "通信に失敗しました。API が動いているか確かめてください";
   switch (error.status) {
     case 401:
-      return "仮のユーザー ID を確かめてください";
+      return "ログインしてください";
     case 403:
       return "この操作の権限がありません";
     case 404:

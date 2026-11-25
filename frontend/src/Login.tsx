@@ -1,0 +1,75 @@
+import { type FormEvent, useState } from "react";
+
+import { ApiError, login, messageOf, type Session } from "./api";
+
+const FAILED = "メールアドレスかパスワードが違います";
+
+/** ログイン画面。成功したらログインした人（トークンを含む）を onLogin に渡す（保存は App のメモリーだけ）。
+ *  notice は、401 でここに戻ってきたときの知らせ（「ログインしてください」） */
+export const Login = ({
+  onLogin,
+  notice,
+}: {
+  onLogin: (session: Session) => void;
+  notice: string | null;
+}) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onLogin(await login(email, password));
+    } catch (err) {
+      // 失敗の理由（メールアドレスがない・パスワードが違うなど）は API も画面も区別しない。
+      // 401 以外（API が止まっている 502 など）は、パスワードの誤りと言わない
+      setError(
+        err instanceof ApiError && err.status === 401 ? FAILED : messageOf(err),
+      );
+      // 打ち間違えたパスワードを画面に残さない
+      setPassword("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const message = error ?? notice;
+  return (
+    <>
+      <h2>ログイン</h2>
+      {message !== null && <p role="alert">{message}</p>}
+      <form onSubmit={submit}>
+        <p>
+          <label>
+            メールアドレス
+            <input
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+        </p>
+        <p>
+          <label>
+            パスワード
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+        </p>
+        <button type="submit" disabled={busy}>
+          ログイン
+        </button>
+      </form>
+    </>
+  );
+};

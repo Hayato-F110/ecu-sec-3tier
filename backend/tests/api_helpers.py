@@ -1,7 +1,8 @@
 """API のテストの共通の準備（tests/conftest.py から読み込む）。
 
 - ダミーデータ（app.seed）を入れた DB を、テストごとのトランザクションの中で使う（終わると取り消す）
-- 仮の本人確認（X-Dev-User-Id）を有効にしたアプリを、TestClient で呼ぶ
+- 本物のトークン（JWT）をテストの中で設定の鍵で署名して作り、`Authorization: Bearer` で API を呼ぶ。
+  毎回ログインすると bcrypt の計算で遅くなるため（ログインそのものは test_api_auth.py で確かめる）
 - app.main などはここで読み込まず、使うときに読み込む（API がまだない段階でも、
   DB のテストは読み込みで落ちないように）
 """
@@ -20,7 +21,7 @@ from app.seed import seed
 
 @dataclass
 class Api:
-    """テストから API を呼ぶ道具。email を渡すと、その人のヘッダーを付ける。"""
+    """テストから API を呼ぶ道具。email を渡すと、その人のトークンを付ける。"""
 
     client: Any  # fastapi.testclient.TestClient
     session: Session
@@ -31,8 +32,14 @@ class Api:
     def ecu(self, part_no: str) -> Ecu:
         return self.session.scalars(select(Ecu).where(Ecu.part_no == part_no)).one()
 
+    def headers_for(self, user: User) -> dict[str, str]:
+        from app.config import get_settings
+        from app.security import create_access_token
+
+        return {"Authorization": f"Bearer {create_access_token(user.id, get_settings())}"}
+
     def headers(self, email: str | None) -> dict[str, str]:
-        return {"X-Dev-User-Id": str(self.user(email).id)} if email else {}
+        return self.headers_for(self.user(email)) if email else {}
 
     def get(self, path: str, email: str | None = None, headers: dict | None = None):
         return self.client.get(path, headers=headers or self.headers(email))
@@ -49,15 +56,14 @@ def db_session(conn: Connection) -> Iterator[Session]:
         yield session
 
 
-def make_api(session: Session, dev_auth_enabled: bool = True) -> Api:
+def make_api(session: Session) -> Api:
     from fastapi.testclient import TestClient
 
     from app.config import get_settings
     from app.deps import get_db
     from app.main import create_app
 
-    settings = get_settings().model_copy(update={"dev_auth_enabled": dev_auth_enabled})
-    app = create_app(settings)
+    app = create_app(get_settings())
 
     def override_db() -> Iterator[Session]:
         yield session

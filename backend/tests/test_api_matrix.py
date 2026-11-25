@@ -369,7 +369,7 @@ def test_supplier_request_does_not_read_ecus_or_assessments(
 ) -> None:
     user = odd_user(api.session, company_email, role)
     # ヘッダーを記録の前に作る（テスト自身の SQL を記録に混ぜない）
-    headers = {"X-Dev-User-Id": str(user.id)}
+    headers = api.headers_for(user)
     # 読み込み済みの利用者・会社を捨て、API が DB を読む SQL を記録できるようにする
     api.session.expire_all()
     statements: list[str] = []
@@ -403,7 +403,7 @@ def test_supplier_request_does_not_read_ecus_or_assessments(
 def test_role_and_company_type_must_both_be_oem(api: Api, company_email: str, role: str) -> None:
     """役割だけ・会社の種類だけでは通さない。"""
     user = odd_user(api.session, company_email, role)
-    res = api.get(URL, headers={"X-Dev-User-Id": str(user.id)})
+    res = api.get(URL, headers=api.headers_for(user))
     assert res.status_code == 403
 
 

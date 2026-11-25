@@ -42,8 +42,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env に POSTGRES_PASSWORD を書く}
       # コンテナどうしは、サービスの名前（db）で相手を探す
       POSTGRES_HOST: db
-      # 仮の本人確認（Day 6 まで）。既定は無効。/docs で試すときだけ .env で true にする
-      DEV_AUTH_ENABLED: ${DEV_AUTH_ENABLED:-false}
+      # トークン（JWT）の署名の鍵。既定の値は置かない（なければ起動しない）
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?.env に JWT_SECRET_KEY を書く}
+      # ダミーデータの利用者のパスワード（全員共通）。空なら全員ログインできない（「!」）
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD:-}
     ports:
       # 手元の PC からだけ接続できるように 127.0.0.1 に限る
       - "127.0.0.1:8000:8000"

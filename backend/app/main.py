@@ -4,27 +4,19 @@
 （読み込んだだけで .env を読まないよう、アプリは関数で作る）
 """
 
-import logging
-
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api import ecus, matrix
+from app import security
+from app.api import auth, ecus, matrix
 from app.config import Settings, get_settings
 from app.db import make_engine, make_session_factory
-
-logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    if settings.dev_auth_enabled:
-        # 有効のまま手元の外へ出すと、ヘッダーに番号を入れるだけで誰にでもなりすませる
-        logger.warning(
-            "仮の本人確認（X-Dev-User-Id）が有効です。手元の開発専用。"
-            "手元の外では DEV_AUTH_ENABLED を false にしてください"
-        )
+    security.warm_up()
     app = FastAPI(
         title="ECU セキュリティ対策状況の管理システム（練習用・ダミーデータ）",
         version="0.1.0",
@@ -32,6 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     # 接続はここでは開かない（最初の問い合わせのときに開く）
     app.state.session_factory = make_session_factory(make_engine(settings.database_url()))
+    app.include_router(auth.router)
     app.include_router(ecus.router)
     app.include_router(matrix.router)
     app.add_exception_handler(RequestValidationError, validation_error)

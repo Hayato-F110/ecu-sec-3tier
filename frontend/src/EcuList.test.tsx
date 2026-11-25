@@ -15,7 +15,7 @@ const stubFetch = (status: number, body: unknown) => {
 const renderList = () =>
   render(
     <MemoryRouter>
-      <EcuList userId="5" />
+      <EcuList token="5" />
     </MemoryRouter>,
   );
 
@@ -55,12 +55,12 @@ describe("自社 ECU 一覧", () => {
     expect(await screen.findByText("未入力")).toBeTruthy();
   });
 
-  it("401 では、仮のユーザー ID を確かめるよう出す", async () => {
+  it("401 では、ログインするよう出す", async () => {
     stubFetch(401, { detail: "認証が必要です" });
     renderList();
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      "仮のユーザー ID を確かめてください",
+      "ログインしてください",
     );
   });
 

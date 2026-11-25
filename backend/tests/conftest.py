@@ -3,6 +3,7 @@
 開発用の DB（.env の POSTGRES_DB）には触らず、同じ PostgreSQL にテスト専用の DB を作り直して使う。
 """
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -11,12 +12,17 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import URL, Connection, Engine, create_engine, text
 
-from app.config import get_settings
+from app.config import get_db_settings
 
 # API のテストの準備（db_session・api）
 pytest_plugins = ["tests.api_helpers"]
 
 TEST_DB = "ecu_sec_test"
+
+# テスト用の JWT の鍵（本物の鍵ではない）。環境変数は .env より優先されるので、手元の .env の値に
+# テストが左右されない。設定を読む前（このファイルを読み込んだ時点）に入れる
+TEST_JWT_SECRET_KEY = "test-only-jwt-secret-key-0123456789abcdef"  # noqa: S105
+os.environ["JWT_SECRET_KEY"] = TEST_JWT_SECRET_KEY
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -32,7 +38,7 @@ def recreate_test_database(name: str) -> URL:
     """テスト専用の DB を空にして作り直す。名前はこのファイルの定数だけ（外から受け取らない）。"""
     if not name.startswith(TEST_DB):
         raise ValueError(f"テスト用以外の DB は作り直さない：{name}")
-    settings = get_settings()
+    settings = get_db_settings()
     # DB の作成・削除はトランザクションの外で行う必要がある（AUTOCOMMIT）
     # 管理用の DB（postgres）につないで作り直す。開発用の DB につなぐと、POSTGRES_DB が
     # テスト用の名前のとき（CI など）に「つないでいる DB は消せない」で落ちる
