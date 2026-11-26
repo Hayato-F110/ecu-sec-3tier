@@ -5,6 +5,7 @@
 // 3層が動いていなければ、すべて飛ばす（落とさない）。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import http from "node:http";
 import { before, describe, it } from "node:test";
 
 const BASE = process.env.WEB_BASE_URL ?? "http://127.0.0.1:8080";
@@ -321,4 +322,68 @@ describe("監査ログの接続元の IP（SC3-26）", () => {
       assert.notEqual(ips[0], FAKE_IP, "nginx 以外から来たヘッダーは使わない");
     },
   );
+});
+
+// ---- SC3-29：nginx は決めた Host 名（127.0.0.1・localhost）だけに応答する ----
+// DNS の付け替えの攻撃（悪いサイトが自分の名前の行き先を 127.0.0.1 に付け替える）への守り。
+// ほかの Host 名には、応答を返さずに接続を切る（nginx の return 444）。
+// fetch は Host を差し替えられないので、node:http で送る。
+// 出典：https://nginx.org/en/docs/http/server_names.html
+const rawRequest = ({ host, method = "GET", path = "/", body }) =>
+  new Promise((resolve) => {
+    const url = new URL(BASE);
+    const headers = { Host: host };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = Buffer.byteLength(body);
+    }
+    const req = http.request(
+      { hostname: url.hostname, port: url.port, method, path, headers },
+      (res) => {
+        res.resume();
+        res.on("end", () =>
+          resolve({ status: res.statusCode, location: res.headers.location }),
+        );
+      },
+    );
+    // 444：nginx が何も返さずに接続を閉じる → 応答なしのエラーになる
+    req.on("error", (e) => resolve({ error: e.code ?? e.message }));
+    req.setTimeout(5000, () => req.destroy(new Error("timeout")));
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
+
+describe("Host 名の確かめ（SC3-29）", () => {
+  const evil = [
+    { path: "/" },
+    { path: "/api/ecus" },
+    {
+      method: "POST",
+      path: "/api/auth/login",
+      body: JSON.stringify({ email: "no-such-user@example.com", password: "x" }),
+    },
+  ];
+  for (const req of evil) {
+    check(
+      `Host: evil.example の ${req.method ?? "GET"} ${req.path} には応答しない（接続を切る）`,
+      async () => {
+        const r = await rawRequest({ host: "evil.example", ...req });
+        assert.equal(r.status, undefined, `応答が返った：${r.status}`);
+        assert.ok(r.error, "接続が切られる");
+      },
+    );
+  }
+
+  for (const host of ["127.0.0.1:8080", "localhost:8080", "127.0.0.1", "localhost"]) {
+    check(`Host: ${host} では今までどおり画面を返す`, async () => {
+      const r = await rawRequest({ host });
+      assert.equal(r.status, 200);
+    });
+  }
+
+  check("/api（末尾の / なし）は、ポートを落とさずに /api/ へ移す（相対の移動先）", async () => {
+    const r = await rawRequest({ host: "127.0.0.1:8080", path: "/api" });
+    assert.equal(r.status, 301);
+    assert.equal(r.location, "/api/");
+  });
 });
