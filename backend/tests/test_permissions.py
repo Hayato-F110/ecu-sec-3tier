@@ -89,8 +89,16 @@ def test_routes_with_ids_say_how_to_reach_other_company_data(api: Api, route: Ro
     assert route.missing is not None, route.path
     cases = route.foreign(api.session)
     assert cases, route.path
-    for email, _params in cases:
-        assert api.user(email).company_id != api.user(A_USERS[0]).company_id
+    for email, params in cases:
+        caller = api.user(email)
+        assert caller.company_id != api.user(A_USERS[0]).company_id
+        # 対象は DB に本当にあり、持ち主は呼ぶ人と別のサプライヤ
+        # （存在しない番号どうしの比べで空回りしない）
+        ecu = api.session.get(Ecu, params["ecu_id"])
+        assert ecu is not None, (route.path, params)
+        assert ecu.supplier_id != caller.company_id, (route.path, params)
+        owner = api.session.get(Company, ecu.supplier_id)
+        assert owner is not None and owner.type == SUPPLIER, (route.path, params)
     # 会社の種類が食い違う利用者で試す番号（#9）も、URL の番号を全部埋める
     names = set(re.findall(r"{(\w+)}", route.path))
     for params in route.probes(api.session):
@@ -119,14 +127,17 @@ def test_other_company_data_is_404_on_every_route_with_ids(api: Api, route: Rout
     # 前提：A 社の ECU の全部の形（版なしを含む）と、B 社の全部の役割がある
     assert len({p["ecu_id"] for _, p in cases}) == len(A_SHAPES) + 1
     assert {e for e, _ in cases} == set(B_USERS)
-    no_version = [
-        p
-        for _, p in cases
-        if not api.session.scalars(
-            select(Assessment).where(Assessment.ecu_id == p["ecu_id"])
+    # 形が本当にそろっている：最新の版の状態が、承認済み・承認待ち・差し戻し・下書き、
+    # と版なし（None）
+    latest = set()
+    for _, p in cases:
+        newest = api.session.scalars(
+            select(Assessment)
+            .where(Assessment.ecu_id == p["ecu_id"])
+            .order_by(Assessment.version.desc())
         ).first()
-    ]
-    assert no_version, "版なしの ECU がない"
+        latest.add(newest.status if newest else None)
+    assert latest == {"approved", "pending", "rejected", "draft", None}
     before = snapshot(api.session)
     for email, params in cases:
         res = call(api, route, params, api.headers(email))
