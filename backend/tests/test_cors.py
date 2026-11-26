@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from tests.api_helpers import Api
-from tests.test_auth import api_routes
+from tests.test_auth import BODY, api_routes
 
 EVIL = "https://evil.example"
 OWN_ECU = "DMY-A004"  # A 社の ECU（入力者が読める）
@@ -37,7 +37,13 @@ def simple_request(client: TestClient, api: Api, method: str, path: str):
     """ほかのサイトの画面からの、ログインした人のトークン付きの呼び出し"""
     url = path.replace("{ecu}", str(api.ecu(OWN_ECU).id))
     headers = {**api.headers(EDITOR), "Origin": EVIL}
-    body = {} if method in ("POST", "PUT", "PATCH") else None
+    # 入力の誤り（422）で処理の前に返らないよう、通る形の本文を送る
+    if path == "/api/auth/login":
+        body = {"email": EDITOR, "password": "not-the-password"}
+    elif method in ("POST", "PUT", "PATCH"):
+        body = BODY
+    else:
+        body = None
     return client.request(method, url, headers=headers, json=body)
 
 
@@ -73,31 +79,38 @@ def test_api_does_not_allow_other_sites(api: Api) -> None:
 # ---- #3 上の確かめが、緩い設定を本当に見つけられること ----
 
 
-@pytest.fixture
-def loose_cors_client(db_session: Session) -> Iterator[tuple[TestClient, FastAPI]]:
+def cors_client(db_session: Session, **cors) -> tuple[TestClient, FastAPI]:
     from app.config import get_settings
     from app.deps import get_db
     from app.main import create_app
 
     app = create_app(get_settings())
-    app.add_middleware(
-        CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
-    )
+    app.add_middleware(CORSMiddleware, **cors)
 
     def override_db() -> Iterator[Session]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_db
-    with TestClient(app) as client:
-        yield client, app
+    return TestClient(app), app
 
 
-def test_check_catches_loose_cors(api: Api, loose_cors_client) -> None:
-    client, app = loose_cors_client
+def test_check_catches_loose_cors(api: Api, db_session: Session) -> None:
+    """どの送り元も許す設定は、ふつうの呼び出しの確かめ（#1）で見つかる"""
+    client, app = cors_client(
+        db_session, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    )
     with pytest.raises(AssertionError, match="#1"):
         check_no_cors(client, api, app)
-    # 事前の問い合わせ（#2）も、緩い設定なら見つかる
-    method, path = routes(app)[0]
-    res = preflight(client, api, method, path)
-    assert cors_headers(res) != []
-    assert res.status_code == 200
+
+
+def test_check_catches_cors_for_other_origin(api: Api, db_session: Session) -> None:
+    """送り元を絞った設定では、ほかのサイトへのふつうの応答にはヘッダーが付かない。
+    事前の問い合わせの確かめ（#2）が働いて、はじめて見つかる"""
+    client, app = cors_client(
+        db_session,
+        allow_origins=["http://127.0.0.1:8080"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    with pytest.raises(AssertionError, match="#2"):
+        check_no_cors(client, api, app)
