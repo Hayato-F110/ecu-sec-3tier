@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
+import { App, AssessmentPage } from "./App";
 
 // docs/test-plans/SC3-11.md の #17、SC3-12.md の #14・#16・#17・#18
 
@@ -314,5 +314,108 @@ describe("2回目のレビューの直し", () => {
     expect(
       await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
     ).toBeTruthy();
+  });
+});
+
+describe("入力画面でログインした人が変わったとき（SC3-35）", () => {
+  it("新しい応答が来るまで、前の人の根拠・入力を出さない", async () => {
+    const ECU = {
+      id: 1,
+      name: "ゲートウェイ ECU",
+      part_no: "DMY-A001",
+      vehicle_model: "架空セダン",
+      latest_version: 1,
+      latest_status: "draft",
+    };
+    const VIEW = {
+      assessment: { id: 7, version: 1, status: "draft" },
+      entries: [
+        {
+          item_id: 1,
+          code: "SB",
+          title: "セキュアブート",
+          status: "done",
+          evidence: "ROM の公開鍵で署名を検証",
+          planned_date: null,
+        },
+      ],
+    };
+    // 1人目（tok-1）には入力の内容を返し、保存は 401（期限切れ）。
+    // 2人目（tok-2）の取得は、返事が来ないままにする
+    stubApi((url, init) => {
+      const auth = new Headers(init?.headers).get("Authorization");
+      if (url === "/api/ecus") return json([ECU]);
+      if (url === "/api/ecus/1/assessment")
+        return auth === "Bearer tok-1"
+          ? json(VIEW)
+          : new Promise<Response>(() => {});
+      if (url === "/api/ecus/1/draft")
+        return json({ detail: "ログインが必要です" }, 401);
+      return json([]);
+    });
+    renderAt("/login");
+    await logIn("a-editor@example.com");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    const evidence = await screen.findByLabelText("セキュアブート の根拠");
+    fireEvent.change(evidence, { target: { value: "A 社だけが知る根拠" } });
+    fireEvent.click(screen.getByRole("button", { name: "下書きを保存" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "ログインしてください",
+    );
+
+    await logIn("b-editor@example.com");
+    // ログインし直すと、元の入力画面に戻る（一覧に戻る作りなら、同じ ECU を開く）
+    const link = await screen
+      .findByRole("link", { name: "ゲートウェイ ECU" }, { timeout: 200 })
+      .catch(() => null);
+    if (link) fireEvent.click(link);
+    expect(await screen.findByText("読み込み中…")).toBeTruthy();
+    expect(screen.queryByDisplayValue("A 社だけが知る根拠")).toBeNull();
+    expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
+    expect(screen.queryByText("ROM の公開鍵で署名を検証")).toBeNull();
+  });
+});
+
+describe("入力のページの部品（SC3-35）", () => {
+  it("トークンが替わったら部品を作り直し、新しい応答が来るまで前の人の入力を出さない", async () => {
+    const VIEW = {
+      assessment: { id: 7, version: 1, status: "draft" },
+      entries: [
+        {
+          item_id: 1,
+          code: "SB",
+          title: "セキュアブート",
+          status: "done",
+          evidence: "ROM の公開鍵で署名を検証",
+          planned_date: null,
+        },
+      ],
+    };
+    // tok-A には入力の内容を返し、tok-B の取得は返事が来ないままにする
+    stubApi((_url, init) =>
+      new Headers(init?.headers).get("Authorization") === "Bearer tok-A"
+        ? json(VIEW)
+        : new Promise<Response>(() => {}),
+    );
+    const page = (token: string) => (
+      <MemoryRouter initialEntries={["/ecus/1"]}>
+        <Routes>
+          <Route
+            path="/ecus/:ecuId"
+            element={<AssessmentPage token={token} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+    const { rerender } = render(page("tok-A"));
+    const evidence = await screen.findByLabelText("セキュアブート の根拠");
+    fireEvent.change(evidence, { target: { value: "A 社だけが知る根拠" } });
+
+    rerender(page("tok-B"));
+    expect(await screen.findByText("読み込み中…")).toBeTruthy();
+    expect(screen.queryByDisplayValue("A 社だけが知る根拠")).toBeNull();
+    expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
   });
 });

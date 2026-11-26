@@ -16,7 +16,7 @@ import { Login } from "./Login";
 import { Matrix } from "./Matrix";
 
 /** URL の ECU の番号（/ecus/3）を読む。数字でなければ API を呼ばずに「見つかりません」 */
-const AssessmentPage = ({ token }: { token: string }) => {
+export const AssessmentPage = ({ token }: { token: string }) => {
   const { ecuId } = useParams();
   const id = /^\d{1,18}$/.test(ecuId ?? "") ? Number(ecuId) : NaN;
   return (
