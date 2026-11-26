@@ -17,14 +17,20 @@ let up = false;
 // 接続はできたが、応答なしで切られた（＝動いているが、この名前を受け付けない）
 let cutByNginx = false;
 before(async () => {
+  let reset = false;
   up = await fetch(`${BASE}/`).then(
     (r) => r.ok,
     (e) => {
       const code = e.cause?.code;
-      cutByNginx = code === "UND_ERR_SOCKET" || code === "ECONNRESET";
+      reset = code === "UND_ERR_SOCKET" || code === "ECONNRESET";
       return false;
     },
   );
+  // 切られたときは、決めた名前（127.0.0.1）で確かめ直す。通れば名前の問題、通らなければ起動の途中（飛ばす）
+  if (reset) {
+    const r = await rawRequest({ host: "127.0.0.1" });
+    cutByNginx = r.status === 200;
+  }
 });
 
 const check = (name, fn) =>
@@ -341,16 +347,22 @@ describe("監査ログの接続元の IP（SC3-26）", () => {
 // ほかの Host 名には、応答を返さずに接続を切る（nginx の return 444）。
 // fetch は Host を差し替えられないので、node:http で送る。
 // 出典：https://nginx.org/en/docs/http/server_names.html
-const rawRequest = ({ host, method = "GET", path = "/", body }) =>
-  new Promise((resolve) => {
+// 接続が切られたことを示すコード（送信の途中で切られると ECONNRESET 以外になることがある）。
+// つながらない（ECONNREFUSED）と時間切れは入れない
+const CLOSED = ["ECONNRESET", "EPIPE", "ECONNABORTED"];
+
+function rawRequest({ host, method = "GET", path = "/", body }) {
+  return new Promise((resolve) => {
     const url = new URL(BASE);
+    // tests/web は手元の nginx（http）専用。https には送らない
+    assert.equal(url.protocol, "http:", "WEB_BASE_URL は http の手元の nginx だけ");
     const headers = { Host: host };
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
       headers["Content-Length"] = Buffer.byteLength(body);
     }
     const req = http.request(
-      { hostname: url.hostname, port: url.port, method, path, headers },
+      { hostname: url.hostname, port: url.port || 80, method, path, headers },
       (res) => {
         res.resume();
         res.on("end", () =>
@@ -364,6 +376,7 @@ const rawRequest = ({ host, method = "GET", path = "/", body }) =>
     if (body !== undefined) req.write(body);
     req.end();
   });
+}
 
 describe("Host 名の確かめ（SC3-29）", () => {
   const evil = [
@@ -382,7 +395,7 @@ describe("Host 名の確かめ（SC3-29）", () => {
         const r = await rawRequest({ host: "evil.example", ...req });
         assert.equal(r.status, undefined, `応答が返った：${r.status}`);
         // 444 で切られたときだけ合格（つながらない・時間切れは合格にしない）
-        assert.equal(r.error, "ECONNRESET", "nginx が応答なしで接続を切る");
+        assert.ok(CLOSED.includes(r.error), `nginx が応答なしで接続を切る（実際：${r.error}）`);
       },
     );
   }
@@ -399,6 +412,21 @@ describe("Host 名の確かめ（SC3-29）", () => {
     assert.equal(r.status, 301);
     assert.equal(r.location, "/api/");
   });
+
+  // 見張り：API へ Host をそのまま渡す（$http_host）ので、細工した Host で移動先をよそへ向けられないこと。
+  // 今は nginx が、ポートの部分が数字でない・範囲外の Host を 400 で断る（2026-11-26 に確かめた）
+  for (const host of [
+    "localhost:@evil.example",
+    "localhost:8080@evil.example",
+    "localhost:abc",
+    "localhost:99999",
+  ]) {
+    check(`細工した Host（${host}）では、移動先をよそへ向けられない`, async () => {
+      const r = await rawRequest({ host, path: "/api/ecus/" });
+      assert.equal(r.status, 400);
+      assert.ok(!(r.location ?? "").includes("evil.example"));
+    });
+  }
 
   // API（FastAPI）が出す移動（末尾の / を取る 307）も、ブラウザが開いたポートのまま移す。
   // nginx が API へ渡す Host に、ポートも含めて渡す（$http_host）ので、API がそのポートで移動先を作る
