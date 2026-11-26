@@ -80,12 +80,18 @@ services:
 networks:
   # 3層のコンテナがつながるネットワーク。アドレスの範囲を決めて、web のアドレスを固定できるようにする。
   # 172.30.0.0/24 は手元の Docker のほかのネットワーク（172.17〜172.19）と重ならない範囲。
+  # VPN などとぶつかって起動しないときは、subnet・ip_range・web の ipv4_address・api の FORWARDED_ALLOW_IPS を一緒に変える。
+  # この設定を変えたら、いまのネットワークを作り直すために一度 docker compose down（-v は付けない）してから up -d する。
   # 書き方の出典：https://docs.docker.com/reference/compose-file/networks/ （ipam）、
   #   https://raw.githubusercontent.com/compose-spec/compose-go/main/schema/compose-spec.json （ipv4_address）
   default:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+          # 自動で配るアドレスは後ろ半分（.128〜.255）だけにする。固定の .10 をほかのコンテナに取られないように
+          ip_range: 172.30.0.128/25
+          # ネットワークの入口のアドレス。書かないと ip_range の先頭（.128）になった（2026-11-26 に確かめた）
+          gateway: 172.30.0.1
 
 volumes:
   db-data:
