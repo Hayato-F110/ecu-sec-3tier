@@ -1,44 +1,44 @@
 # 引き継ぎ
 
-最終更新：2026-11-25 19:15
+最終更新：2026-11-26 19:20
 
 ## いまの状態
 
-- スプリント1：完了
-- スプリント2（11/25〜11/27 23:00、ゴール「ローカルで3層が動き、ログインできる」）：SC3-10・11・12・31 は完了。残りは SC3-26（進行中）・SC3-29（期限はどちらも 11/27）
-- SC3-26（監査ログの接続元の IP）：ブランチ `feature/SC3-26-forwarded-ip`（まだ変更なし）。**設計はオーナーが承認済み（11/25）**
-  - docker-compose.yml でネットワークのアドレスの範囲を決め、nginx（web）のアドレスを固定する
-  - API に `FORWARDED_ALLOW_IPS`（web のアドレスだけ）を渡す
-  - tests/web：nginx 経由で、左側に嘘のアドレス（203.0.113.9）を入れてログインに失敗し、DB の監査ログの最後の行の IP が、nginx のアドレスでも嘘のアドレスでもないことを `docker compose exec db psql` で確かめる。compose の `FORWARDED_ALLOW_IPS` と web の固定のアドレスが同じことも確かめる
-  - 根拠：uvicorn 0.54.0 のソース（`uvicorn/config.py:363` 既定は 127.0.0.1,::1、`uvicorn/middleware/proxy_headers.py:169-187` 右から見て信じない最初のアドレス）。公式のサイト（uvicorn.org）は 11/25 に DNS の失敗で読めなかったので、着手の前にもう一度読む
-  - 分かっている限界：Docker Desktop では、残るのは Docker のネットワークの入口のアドレスになる見込み（推測。テストで確かめる）
-- 3層は起動したまま（`docker compose ps`）。`.env` にはオーナーが `JWT_SECRET_KEY`・`SEED_USER_PASSWORD` を入れ、14人のパスワードを入れ直した
-- スプリント2の設計判断（`/design-decisions`）とふりかえり（`/retro`）は、SC3-26・29 が終わってから（スプリントの最後の作業のあと）行う
+- スプリント2：完了（11/26 にオーナーが前倒しで完了にした）。設計判断とふりかえりは main に入った（PR #27・#28）
+- スプリント3（11/26 19:04〜11/30 23:00、ゴール「会社ごとのデータ分離、承認フロー、メーカーの修正依頼・コメントが動く」）：11件・25ポイント。すべて未着手か進行中
+- SC3-13（Day 7）と SC3-34：進行中。**同じ PR で直す**（11/26 にオーナーが決めた）
+  - ブランチ `feature/SC3-13-permissions`（push 済み）。テストの一覧 `docs/test-plans/SC3-13.md` だけをコミットした
+  - test-plan-reviewer の指摘 17件を反映済み。**オーナーの設計案の承認待ち**（承認の前は実装しない）
+  - オーナーに決めてもらうこと：サプライヤの管理者が、自社の下書き・承認待ちの中身を読めること（今の実装は読める。おすすめは仕様に一文足して「読める」のまま）
+- SC3-42（CORS のテスト）：設計案の下書きを `tmp/plan-SC3-42.md` に置いた（Git の対象外）。承認されたら `docs/test-plans/SC3-42.md` に写す
+- 3層は起動している（ネットワーク 172.30.0.0/24、nginx 172.30.0.10）
 
 ## 次にやること
 
-1. SC3-26：uvicorn の公式の資料を読む → テストを先に（赤）→ compose を直す → `/code-review`（守りに関わるので2回まで）・security-reviewer → PR → マージ → Jira で完了
-2. SC3-29（nginx は決めた Host 名だけに応答する）。SC3-26 をマージしたあとの main から始める
-3. スプリント2の `/design-decisions` と `/retro`（11/27 まで）
-4. **スプリント3の計画（11/28）**：ストーリーポイントを実績と一緒に見直す。スプリント3には SC3-32・34・35・38・39 が入っている
+1. SC3-13・34：オーナーの承認 → テストを先に書く（#9 は赤、#1〜#8 は壊して落ちることを確かめる）→ `supplier_user` に会社の種類の確かめ → `/code-review`（守りに関わるので2回まで）・security-reviewer → PR
+2. SC3-42（下書きあり）、SC3-30・39・32・25・35・38、SC3-14（Day 8）・15（Day 9）
 
 ## オーナーにお願いすること
 
-- なし（SC3-26 の設計は承認済み）
+- SC3-13・34 の設計案（テストの一覧）の承認
+- サプライヤの管理者が下書きの中身を読めることの決定
+- SC3-42 の設計案の承認
 
 ## つまずき防止のメモ
 
-- Docker Desktop が起動していないと、テストは DB に接続できず全部止まる。Docker Desktop は `$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe` にある（Program Files ではない）
+- Docker Desktop が起動していないと、テストは DB に接続できず全部止まる。Docker Desktop は `$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe` にある（Program Files ではない）。PC を止めると3層も止まるので、`/start-day` で実際に確かめる
+- compose のネットワークの設定を変えたら、`docker compose down`（`-v` なし）してから `up -d`。起動の直後は API の準備（DB の変更・ダミーデータ）に数秒かかるので、`curl` で 401 が返るのを待ってからテストを流す（`tmp/recreate-and-test.sh`）
+- nginx は 127.0.0.1・localhost の Host にだけ応答する（SC3-29）。ほかの名前で開くと応答なしで切られる
 - 検査の出力はパイプにつながず、`tmp/` のファイルに書いてから読む（Hook が止める）
 - Git Bash で `origin/main:パス` を使うときは `MSYS_NO_PATHCONV=1`（パスに書き換えられる）
 - `node -e` に正規表現のバックスラッシュを書くと Hook が止める。スクリプトは `tmp/` のファイルに
 - コマンドの中に `.env` の文字があると、コメントでも Hook `protect-secrets` が止める。直しのスクリプトはファイルに書いてから流す
-- nginx のテスト：`node --test tests/web/`（3層が動いているときだけ。ログインして呼ぶ確かめは `SEED_USER_PASSWORD` を環境変数で渡したときだけ動き、Claude は値を知らないので飛ばされる）
+- nginx のテスト：`node --test tests/web/`（3層が動いているときだけ。ログインして呼ぶ確かめは `SEED_USER_PASSWORD` を環境変数で渡したときだけ動く）。オーナーに流してもらうときは、`.env` から読み込むコマンドを渡す（見本の文字を置かない。メモリーの決まり）
+- `tests/web/nginx.test.mjs` は Prettier の対象外の書き方。ファイル全体に `prettier --write` をかけない（差分が膨らむ）
 - FastAPI 0.165 は include_router したルーターを展開せずに持つ（`original_router`）。登録された API の一覧は `tests/test_auth.py` の `api_routes` でたどる
 - Jira の開始日（customfield_10015）は遷移と一緒に設定できない。遷移のあと `editJiraIssue` で
-- 作業時間：前回の `/end-day` のコミットの時刻から数える `node tmp/worktime-since.mjs <時刻> < /dev/null`（0 時で区切らない決まりに合う）。日付で数える `tmp/worktime.mjs` もある
+- 作業時間：前回の `/end-day` のコミットの時刻から数える `node tmp/worktime-since.mjs <時刻> < /dev/null`
 - 画面のテスト（Vitest）は、作業フォルダのドライブ名が小文字の `c:` だと全部落ちる。PowerShell で `Set-Location "C:\Users\..."`（大文字）にしてから流す
-- Python などで画面のファイルを書き換えたら、`npx prettier --write` をかける（保存時の整形が掛からない）
-- Hook `guard-cite-sources` は、返答に「Jira」などの語と番号付きの手順があると、AWS の手順と見なして止めることがある（SC3-39）。直るまでは、手順の返答にサービスの名前を混ぜない
-- Hook を import する確かめ用のスクリプトの名前を、Hook の名前で終わらせない（Hook の本体が動いて入力を待ち続ける）
+- Hook `guard-cite-sources` は、返答にサービスの名前と番号付きの手順があると、AWS の手順と見なして止めることがある（SC3-39）。直るまでは、手順の返答にサービスの名前を混ぜない
 - `/code-review` は終わるまで待つ形で動く（数分）。呼ぶ前に「目安の時間」と「待つ間に進める課題」を書く（仕組みは SC3-32）
+- Starlette の公式サイト（www.starlette.io）は 11/26 に名前の解決に失敗した。手元の `backend/.venv/Lib/site-packages/starlette/` のソースで確かめられる
