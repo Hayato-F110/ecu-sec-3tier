@@ -3,6 +3,8 @@
 // ログインして呼ぶ確かめは、ダミーデータのパスワードを環境変数 SEED_USER_PASSWORD で渡したときだけ動く
 //   PowerShell：$env:SEED_USER_PASSWORD = "…"; node --test tests/web/
 // 3層が動いていなければ、すべて飛ばす（落とさない）。
+// WEB_BASE_URL は手元の nginx（http、名前は 127.0.0.1 か localhost）だけ。AWS では nginx を使わない。
+// ほかの名前にすると nginx が接続を切る（SC3-29）ので、飛ばさずに落とす。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import http from "node:http";
@@ -12,15 +14,25 @@ const BASE = process.env.WEB_BASE_URL ?? "http://127.0.0.1:8080";
 const CSP_START = "default-src 'self'";
 
 let up = false;
+// 接続はできたが、応答なしで切られた（＝動いているが、この名前を受け付けない）
+let cutByNginx = false;
 before(async () => {
   up = await fetch(`${BASE}/`).then(
     (r) => r.ok,
-    () => false,
+    (e) => {
+      const code = e.cause?.code;
+      cutByNginx = code === "UND_ERR_SOCKET" || code === "ECONNRESET";
+      return false;
+    },
   );
 });
 
 const check = (name, fn) =>
   it(name, async (t) => {
+    if (cutByNginx)
+      assert.fail(
+        `${BASE} の名前を nginx が受け付けない（frontend/nginx.conf の server_name を確かめる）`,
+      );
     if (!up) return t.skip(`${BASE} が動いていない`);
     await fn(t);
   });
@@ -369,7 +381,8 @@ describe("Host 名の確かめ（SC3-29）", () => {
       async () => {
         const r = await rawRequest({ host: "evil.example", ...req });
         assert.equal(r.status, undefined, `応答が返った：${r.status}`);
-        assert.ok(r.error, "接続が切られる");
+        // 444 で切られたときだけ合格（つながらない・時間切れは合格にしない）
+        assert.equal(r.error, "ECONNRESET", "nginx が応答なしで接続を切る");
       },
     );
   }
@@ -386,4 +399,14 @@ describe("Host 名の確かめ（SC3-29）", () => {
     assert.equal(r.status, 301);
     assert.equal(r.location, "/api/");
   });
+
+  // API（FastAPI）が出す移動（末尾の / を取る 307）も、ブラウザが開いたポートのまま移す。
+  // nginx が API へ渡す Host に、ポートも含めて渡す（$http_host）ので、API がそのポートで移動先を作る
+  for (const host of ["127.0.0.1:8080", "localhost:8080"]) {
+    check(`API の移動（/api/ecus/ → /api/ecus）も ${host} のポートのまま`, async () => {
+      const r = await rawRequest({ host, path: "/api/ecus/" });
+      assert.equal(r.status, 307);
+      assert.equal(r.location, `http://${host}/api/ecus`);
+    });
+  }
 });
