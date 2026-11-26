@@ -231,6 +231,80 @@ describe("監査ログの接続元の IP（SC3-26）", () => {
     },
   );
 
+  // SC3-26 の完了条件「nginx 経由で保存したときの監査ログの ip」。下書きの今の入力をそのまま保存し直すので、
+  // 入力の中身は変わらず、監査ログに save_draft が1行増えるだけ。パスワードを渡したときだけ動く
+  checkDocker(
+    "nginx 経由で保存：監査ログの ip は嘘のアドレスでも nginx のアドレスでもなく、直接つないだときの接続元",
+    async (t, webId) => {
+      const password = process.env.SEED_USER_PASSWORD;
+      if (!password) return t.skip("SEED_USER_PASSWORD が渡されていない");
+      const res = await login("a-editor@example.com", password);
+      assert.equal(res.status, 200);
+      const { access_token: token } = await res.json();
+      const auth = { Authorization: `Bearer ${token}` };
+
+      // 下書きの ECU と、その今の入力（入力済みの項目だけ）を探す
+      const ecus = await (await fetch(`${BASE}/api/ecus`, { headers: auth })).json();
+      let target;
+      for (const ecu of ecus.filter((e) => e.latest_status === "draft")) {
+        const view = await (
+          await fetch(`${BASE}/api/ecus/${ecu.id}/assessment`, { headers: auth })
+        ).json();
+        const entries = view.entries
+          .filter((e) => e.status !== null && e.evidence !== null)
+          .map(({ item_id, status, evidence, planned_date }) => ({
+            item_id,
+            status,
+            evidence,
+            planned_date,
+          }));
+        if (view.assessment?.status === "draft" && entries.length > 0) {
+          target = { id: ecu.id, entries };
+          break;
+        }
+      }
+      if (!target) return t.skip("a-editor に、入力のある下書きの ECU がない");
+
+      const nginx = [
+        ...new Set([
+          ...fixedWebAddresses(composeConfig()),
+          ...webAddresses(webId),
+        ]),
+      ];
+      // 比べる相手：API を直接呼んだときの接続元（存在しない利用者で失敗させる。a-editor の失敗の回数を増やさない）
+      const before0 = lastAuditId();
+      await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "no-such-user@example.com", password: "x" }),
+      });
+      const [direct] = auditIpsAfter(before0);
+      assert.ok(direct, "直接呼んだときの接続元が監査ログに残る");
+
+      const before = lastAuditId();
+      const put = await fetch(`${BASE}/api/ecus/${target.id}/draft`, {
+        method: "PUT",
+        headers: {
+          ...auth,
+          "Content-Type": "application/json",
+          "X-Forwarded-For": FAKE_IP,
+        },
+        body: JSON.stringify({ entries: target.entries }),
+      });
+      assert.equal(put.status, 200);
+      const ip = psql(
+        `SELECT coalesce(host(ip), '') FROM audit_logs WHERE id > ${before} AND action = 'save_draft' ORDER BY id`,
+      )
+        .split("\n")
+        .filter((s) => s !== "");
+      assert.equal(ip.length, 1, "保存の監査ログが1行だけ増える");
+      t.diagnostic(`保存の接続元：${ip[0]}（直接：${direct}、nginx：${nginx.join(", ")}）`);
+      assert.notEqual(ip[0], FAKE_IP, "左に書かれた嘘のアドレスを信じない");
+      assert.ok(!nginx.includes(ip[0]), "nginx のアドレスではない");
+      assert.equal(ip[0], direct, "直接つないだときと同じ接続元（ブラウザ側）");
+    },
+  );
+
   // 直しそのものではなく、信じる相手を広げすぎた設定（"*" や、入口を含む範囲）を見張る
   checkDocker(
     "API を直接呼んだとき（8000番）：X-Forwarded-For を信じない",
