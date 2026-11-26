@@ -232,7 +232,8 @@ describe("監査ログの接続元の IP（SC3-26）", () => {
   );
 
   // SC3-26 の完了条件「nginx 経由で保存したときの監査ログの ip」。下書きの今の入力をそのまま保存し直すので、
-  // 入力の中身は変わらず、監査ログに save_draft が1行増えるだけ。パスワードを渡したときだけ動く
+  // 入力の中身は変わらず、監査ログに save_draft が1行増えるだけ。パスワードを渡したときだけ動く。
+  // 注意：読んでから保存し直すまでの数秒の間に画面で同じ下書きを保存すると、その入力を古い値で上書きする。流す間は画面で保存しない
   checkDocker(
     "nginx 経由で保存：監査ログの ip は嘘のアドレスでも nginx のアドレスでもなく、直接つないだときの接続元",
     async (t, webId) => {
@@ -271,13 +272,16 @@ describe("監査ログの接続元の IP（SC3-26）", () => {
           ...webAddresses(webId),
         ]),
       ];
-      // 比べる相手：API を直接呼んだときの接続元（存在しない利用者で失敗させる。a-editor の失敗の回数を増やさない）
+      assert.ok(nginx.length > 0, "nginx のアドレスが分からないまま比べない");
+      // 比べる相手：API を直接呼んだときの接続元。存在しない利用者で失敗させる
+      // （SC3-36 でログインの回数の制限が入っても、a-editor が締め出されないように）
       const before0 = lastAuditId();
-      await fetch(`${API_BASE}/api/auth/login`, {
+      const directRes = await fetch(`${API_BASE}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: "no-such-user@example.com", password: "x" }),
       });
+      assert.equal(directRes.status, 401);
       const [direct] = auditIpsAfter(before0);
       assert.ok(direct, "直接呼んだときの接続元が監査ログに残る");
 
