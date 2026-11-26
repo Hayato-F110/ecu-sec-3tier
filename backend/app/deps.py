@@ -65,9 +65,15 @@ def current_user(
     return user
 
 
-def supplier_user(user: Annotated[User, Depends(current_user)]) -> User:
-    """サプライヤ用の API。メーカーの利用者は ECU を探す前に 403（ECU の有無を明かさない）。"""
-    if user.role not in SUPPLIER_ROLES:
+def supplier_user(user: Annotated[User, Depends(current_user)], db: Db) -> User:
+    """サプライヤ用の API。サプライヤの会社の、サプライヤの役割の利用者だけ。
+
+    役割に加えて会社の種類も確かめる（SC3-34。役割と会社の種類が合うことは DB の制約で守っていない。
+    メーカーの会社に「入力者」ができても、サプライヤ用の API を通さない）。
+    それ以外の利用者は ECU を探す前に 403（ECU の有無を明かさない）。
+    """
+    company = db.get(Company, user.company_id)
+    if user.role not in SUPPLIER_ROLES or company is None or company.type != "supplier":
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="この操作はできません")
     return user
 
