@@ -80,6 +80,8 @@ def test_every_route_is_in_permission_table(api: Api) -> None:
         assert set(route.allowed) == set(ROLES), route.path
     # #1 で呼ぶ利用者も、全部の役割をちょうど持つ
     assert {role_of(api, e) for e in A_USERS + OEM_USERS} == set(ROLES)
+    # #3・#5 で他社として呼ぶ B 社の利用者も、サプライヤの全部の役割を持つ
+    assert {role_of(api, e) for e in B_USERS} == set(SUPPLIER_ROLES)
 
 
 @pytest.mark.parametrize("route", PARAM_ROUTES, ids=PARAM_IDS)
@@ -182,6 +184,11 @@ def test_query_parameters_do_not_widen_scope(api: Api, path: str) -> None:
     url = path.format(ecu_id=ecu_by_part_no(api.session, "DMY-A004").id)
     plain = api.get(url, A_USERS[0])
     assert plain.status_code == 200
+    if path == "/api/ecus":
+        # 比べる元の応答そのものが自社の ECU だけ（全社の一覧どうしの比べで通らない）
+        a = api.user(A_USERS[0]).company_id
+        own = set(api.session.scalars(select(Ecu.id).where(Ecu.supplier_id == a)))
+        assert {row["id"] for row in plain.json()} == own
     for query in (
         f"?company_id={b.id}",
         f"?supplier_id={b.id}",
