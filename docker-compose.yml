@@ -73,8 +73,10 @@ services:
       # API のコンテナが作られてから起動する（中継先の名前 api が見つかるように）
       - api
     networks:
+      # 下の networks の default（3層のネットワーク）につなぐ
       default:
-        # nginx のアドレスを固定する。API はこのアドレスから来た中継のヘッダーだけを信じる（api の FORWARDED_ALLOW_IPS）
+        # nginx のアドレスを固定する。API はこのアドレスから来た中継のヘッダーだけを信じる（api の FORWARDED_ALLOW_IPS）。
+        # 固定なので web は1つしか動かせない（docker compose run web や --scale web=2 はアドレスの取り合いで起動しない）
         ipv4_address: 172.30.0.10
 
 networks:
@@ -84,9 +86,13 @@ networks:
   # この設定を変えたら、いまのネットワークを作り直すために一度 docker compose down（-v は付けない）してから up -d する。
   # 書き方の出典：https://docs.docker.com/reference/compose-file/networks/ （ipam）、
   #   https://raw.githubusercontent.com/compose-spec/compose-go/main/schema/compose-spec.json （ipv4_address）
+  # compose が何も書かなくても作るネットワーク（default）の設定を上書きする
   default:
+    # アドレスの配り方（IPAM）の設定
     ipam:
+      # 配る範囲の設定の一覧（ここでは1つ）
       config:
+        # このネットワーク全体のアドレスの範囲（172.30.0.0〜172.30.0.255）
         - subnet: 172.30.0.0/24
           # 自動で配るアドレスは後ろ半分（.128〜.255）だけにする。固定の .10 をほかのコンテナに取られないように
           ip_range: 172.30.0.128/25
