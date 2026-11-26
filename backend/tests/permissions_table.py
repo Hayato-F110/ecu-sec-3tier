@@ -41,13 +41,16 @@ def company_named_like(s: Session, kind: str, letter: str | None = None) -> Comp
     companies = list(s.scalars(query))
     if letter is None:
         return companies[0]
-    return next(c for c in companies if c.name.endswith(f"{letter.upper()} 社"))
+    found = next((c for c in companies if c.name.endswith(f"{letter.upper()} 社")), None)
+    assert found is not None, f"{letter.upper()} 社がない（ダミーデータの会社名の形が変わった？）"
+    return found
 
 
 def make_ecu(s: Session, company: Company, part_no: str) -> Ecu:
-    """テストの中で ECU を作る（同じ品番があればそれを返す）。"""
+    """テストの中で ECU を作る（同じ品番があればそれを返す。持ち主の会社が違えば落とす）。"""
     found = s.scalars(select(Ecu).where(Ecu.part_no == part_no)).one_or_none()
     if found is not None:
+        assert found.supplier_id == company.id, f"{part_no} の持ち主が {company.name} ではない"
         return found
     ecu = Ecu(supplier_id=company.id, name=f"テスト {part_no}", part_no=part_no, vehicle_model="X")
     s.add(ecu)

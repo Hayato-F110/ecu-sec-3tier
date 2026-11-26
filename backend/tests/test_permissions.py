@@ -4,6 +4,7 @@
 「何も変わらない」は DB 全体（版・入力・監査ログの件数）のスナップショットで比べる。
 """
 
+import re
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -11,7 +12,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Assessment, Company, Ecu, User
+from app.models import ROLES, Assessment, Company, Ecu, User
 from app.seed import LOCKED_PASSWORD
 from tests.api_helpers import Api
 from tests.conftest import TEST_JWT_SECRET_KEY
@@ -73,9 +74,12 @@ def test_every_route_is_in_permission_table(api: Api) -> None:
     assert registered, "登録された API が 0件（たどり方が外れている）"
     in_table = {(r.method, r.path.replace("{ecu_id}", "{ecu}")) for r in ROUTES}
     assert registered - PUBLIC == in_table
-    # 表の役割は、全部の役割をちょうど持つ（役割を足したら表も直す）
+    # 表の役割は、アプリの全部の役割（DB の制約と同じ一覧）をちょうど持つ。役割を足したら表も直す
+    assert set(SUPPLIER_ROLES + OEM_ROLES) == set(ROLES)
     for route in ROUTES:
-        assert set(route.allowed) == set(SUPPLIER_ROLES + OEM_ROLES), route.path
+        assert set(route.allowed) == set(ROLES), route.path
+    # #1 で呼ぶ利用者も、全部の役割をちょうど持つ
+    assert {role_of(api, e) for e in A_USERS + OEM_USERS} == set(ROLES)
 
 
 @pytest.mark.parametrize("route", PARAM_ROUTES, ids=PARAM_IDS)
@@ -87,6 +91,18 @@ def test_routes_with_ids_say_how_to_reach_other_company_data(api: Api, route: Ro
     assert cases, route.path
     for email, _params in cases:
         assert api.user(email).company_id != api.user(A_USERS[0]).company_id
+    # 会社の種類が食い違う利用者で試す番号（#9）も、URL の番号を全部埋める
+    names = set(re.findall(r"{(\w+)}", route.path))
+    for params in route.probes(api.session):
+        assert set(params) == names, (route.path, params)
+
+
+def test_routes_with_ids_use_ecu_id() -> None:
+    """#3 の前提の確かめ（A 社の ECU の全部の形）は ECU の番号の形だけ。
+    ほかの番号（コメントの番号など）の API を足したら、#3 にその形の前提の確かめを足す。
+    """
+    for route in PARAM_ROUTES:
+        assert set(re.findall(r"{(\w+)}", route.path)) == {"ecu_id"}, route.path
 
 
 def test_there_are_routes_with_ids() -> None:
