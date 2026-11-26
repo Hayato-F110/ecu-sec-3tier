@@ -317,8 +317,10 @@ describe("2回目のレビューの直し", () => {
   });
 });
 
-describe("入力画面でログインした人が変わったとき（SC3-35）", () => {
-  it("新しい応答が来るまで、前の人の根拠・入力を出さない", async () => {
+describe("入力画面でログインした人が変わったとき（SC3-12.md #18・SC3-35）", () => {
+  // 期限切れ（401）で画面全体がログイン画面に替わる流れの見張り。
+  // 入力の部品の作り直し（key）は、下の「入力のページの部品」で確かめる
+  it("別の人でログインし直すと自分の一覧に移り、前の人の入力画面と入力を出さない", async () => {
     const ECU = {
       id: 1,
       name: "ゲートウェイ ECU",
@@ -340,15 +342,14 @@ describe("入力画面でログインした人が変わったとき（SC3-35）"
         },
       ],
     };
-    // 1人目（tok-1）には入力の内容を返し、保存は 401（期限切れ）。
-    // 2人目（tok-2）の取得は、返事が来ないままにする
-    stubApi((url, init) => {
-      const auth = new Headers(init?.headers).get("Authorization");
-      if (url === "/api/ecus") return json([ECU]);
+    // 会社ごとの分離のとおり：A 社の ECU は A 社の人（tok-1）にだけ返す。
+    // B 社の人（tok-2）の一覧は空、A 社の ECU は 404。保存は 401（期限切れ）
+    const fetchMock = stubApi((url, init) => {
+      const isA =
+        new Headers(init?.headers).get("Authorization") === "Bearer tok-1";
+      if (url === "/api/ecus") return json(isA ? [ECU] : []);
       if (url === "/api/ecus/1/assessment")
-        return auth === "Bearer tok-1"
-          ? json(VIEW)
-          : new Promise<Response>(() => {});
+        return isA ? json(VIEW) : json({ detail: "見つかりません" }, 404);
       if (url === "/api/ecus/1/draft")
         return json({ detail: "ログインが必要です" }, 401);
       return json([]);
@@ -366,19 +367,25 @@ describe("入力画面でログインした人が変わったとき（SC3-35）"
     );
 
     await logIn("b-editor@example.com");
-    // ログインし直すと、元の入力画面に戻る（一覧に戻る作りなら、同じ ECU を開く）
-    const link = await screen
-      .findByRole("link", { name: "ゲートウェイ ECU" }, { timeout: 200 })
-      .catch(() => null);
-    if (link) fireEvent.click(link);
-    expect(await screen.findByText("読み込み中…")).toBeTruthy();
+    // 別の人は元のページ（A 社の入力画面）に戻さず、自分の最初のページへ
+    expect(
+      await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("heading", { name: "対策状況の入力" }),
+    ).toBeNull();
     expect(screen.queryByDisplayValue("A 社だけが知る根拠")).toBeNull();
-    expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
     expect(screen.queryByText("ROM の公開鍵で署名を検証")).toBeNull();
+    // B 社の人のトークンで、A 社の ECU の入力を取りに行っていない
+    const bAsked = fetchMock.mock.calls.filter(
+      (c) =>
+        authOf(c) === "Bearer tok-2" && String(c[0]).startsWith("/api/ecus/1"),
+    );
+    expect(bAsked).toEqual([]);
   });
 });
 
-describe("入力のページの部品（SC3-35）", () => {
+describe("入力のページの部品（SC3-12.md #18・SC3-35）", () => {
   it("トークンが替わったら部品を作り直し、新しい応答が来るまで前の人の入力を出さない", async () => {
     const VIEW = {
       assessment: { id: 7, version: 1, status: "draft" },
