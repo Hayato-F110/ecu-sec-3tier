@@ -4,6 +4,7 @@
 //   PowerShell：$env:SEED_USER_PASSWORD = "…"; node --test tests/web/
 // 3層が動いていなければ、すべて飛ばす（落とさない）。
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { before, describe, it } from "node:test";
 
 const BASE = process.env.WEB_BASE_URL ?? "http://127.0.0.1:8080";
@@ -87,4 +88,127 @@ describe("nginx（frontend/nginx.conf）", () => {
       assert.equal(r.headers.get("referrer-policy"), "no-referrer");
     });
   }
+});
+
+// ---- SC3-26：監査ログの接続元の IP（API は nginx から来た X-Forwarded-For だけを信じる） ----
+// nginx は、届いた X-Forwarded-For の右に本当の接続元を足して API へ渡す（$proxy_add_x_forwarded_for）。
+// API（uvicorn）は FORWARDED_ALLOW_IPS に書いたアドレスから来た要求でだけ、このヘッダーを右から読み、
+// 信じないアドレスに当たったところを接続元にする。左に書かれた嘘のアドレスは使わない。
+// 出典：https://uvicorn.dev/settings/ ・ https://uvicorn.dev/deployment/
+const FAKE_IP = "203.0.113.9"; // 説明用のアドレス（RFC 5737）。どこにも届かない
+
+const docker = (args) =>
+  execFileSync("docker", ["compose", ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+// compose の設定を、変数を埋めた形で読む（YAML を自分で解かない）
+const composeConfig = () => JSON.parse(docker(["config", "--format", "json"]));
+
+// DB のコンテナの中で SQL を流す。利用者と DB の名前はコンテナの環境変数から取る（値をテストに持ち込まない）
+const psql = (sql) =>
+  docker([
+    "exec",
+    "-T",
+    "db",
+    "sh",
+    "-c",
+    `psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "${sql}"`,
+  ]).trim();
+
+const lastAuditId = () =>
+  Number(psql("SELECT coalesce(max(id), 0) FROM audit_logs"));
+const auditIpsAfter = (id) =>
+  psql(
+    `SELECT coalesce(host(ip), '') FROM audit_logs WHERE id > ${id} AND action = 'login_failed' ORDER BY id`,
+  )
+    .split("\n")
+    .filter((s) => s !== "");
+
+// 動いている web のコンテナの、compose のネットワークの上のアドレス
+const webAddress = () => {
+  const id = docker(["ps", "-q", "web"]).trim();
+  return execFileSync(
+    "docker",
+    [
+      "inspect",
+      id,
+      "--format",
+      "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+    ],
+    {
+      encoding: "utf8",
+    },
+  )
+    .trim()
+    .split(" ")[0];
+};
+
+const loginWithForwardedFor = (base) =>
+  fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forwarded-For": FAKE_IP },
+    body: JSON.stringify({
+      email: "a-editor@example.com",
+      password: "wrong password",
+    }),
+  });
+
+describe("監査ログの接続元の IP（SC3-26）", () => {
+  it("compose：API が信じるアドレス（FORWARDED_ALLOW_IPS）は、web の固定のアドレス1つだけ", (t) => {
+    let config;
+    try {
+      config = composeConfig();
+    } catch (e) {
+      return t.skip(
+        `docker compose config を読めない：${e.message.split("\n")[0]}`,
+      );
+    }
+    const nets = config.services.web.networks ?? {};
+    const fixed = Object.values(nets)
+      .map((n) => n?.ipv4_address)
+      .filter(Boolean);
+    assert.equal(
+      fixed.length,
+      1,
+      "web にはネットワークの上の固定のアドレス（ipv4_address）が1つある",
+    );
+    assert.equal(
+      config.services.api.environment?.FORWARDED_ALLOW_IPS,
+      fixed[0],
+    );
+  });
+
+  check(
+    "nginx 経由：X-Forwarded-For の嘘のアドレスも、nginx のアドレスも監査ログに残らない",
+    async (t) => {
+      const before = lastAuditId();
+      const nginx = webAddress();
+      const r = await loginWithForwardedFor(BASE);
+      assert.equal(r.status, 401);
+      const ips = auditIpsAfter(before);
+      assert.equal(ips.length, 1, "ログインの失敗が1行だけ増える");
+      t.diagnostic(`残った接続元：${ips[0]}（nginx：${nginx}）`);
+      assert.notEqual(ips[0], FAKE_IP, "左に書かれた嘘のアドレスを信じない");
+      assert.notEqual(
+        ips[0],
+        nginx,
+        "nginx から来た X-Forwarded-For を読んで、nginx の向こうの接続元を残す",
+      );
+    },
+  );
+
+  check(
+    "API を直接呼んだとき（8000番）：X-Forwarded-For を信じない",
+    async () => {
+      const api = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
+      const before = lastAuditId();
+      const r = await loginWithForwardedFor(api);
+      assert.equal(r.status, 401);
+      const ips = auditIpsAfter(before);
+      assert.equal(ips.length, 1, "ログインの失敗が1行だけ増える");
+      assert.notEqual(ips[0], FAKE_IP, "nginx 以外から来たヘッダーは使わない");
+    },
+  );
 });
