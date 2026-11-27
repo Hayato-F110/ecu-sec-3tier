@@ -15,7 +15,8 @@ import { EcuList } from "./EcuList";
 import { Login } from "./Login";
 import { Matrix } from "./Matrix";
 
-/** URL の ECU の番号（/ecus/3）を読む。数字でなければ API を呼ばずに「見つかりません」 */
+/** URL の ECU の番号（/ecus/3）を読む。数字でなければ API を呼ばずに「見つかりません」。
+ * export はテスト（App.test.tsx の部品のテスト）のためだけ。画面からはログインの確かめを通る App の中でだけ使う */
 export const AssessmentPage = ({ token }: { token: string }) => {
   const { ecuId } = useParams();
   const id = /^\d{1,18}$/.test(ecuId ?? "") ? Number(ecuId) : NaN;

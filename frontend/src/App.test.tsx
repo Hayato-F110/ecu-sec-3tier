@@ -375,7 +375,8 @@ describe("入力画面でログインした人が変わったとき（SC3-12.md 
       screen.queryByRole("heading", { name: "対策状況の入力" }),
     ).toBeNull();
     expect(screen.queryByDisplayValue("A 社だけが知る根拠")).toBeNull();
-    expect(screen.queryByText("ROM の公開鍵で署名を検証")).toBeNull();
+    // 根拠は入力欄の値なので、文字（queryByText）では見つからない。値で探す
+    expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
     // B 社の人のトークンで、A 社の ECU の入力を取りに行っていない
     const bAsked = fetchMock.mock.calls.filter(
       (c) =>
@@ -401,7 +402,7 @@ describe("入力のページの部品（SC3-12.md #18・SC3-35）", () => {
       ],
     };
     // tok-A には入力の内容を返し、tok-B の取得は返事が来ないままにする
-    stubApi((_url, init) =>
+    const fetchMock = stubApi((_url, init) =>
       new Headers(init?.headers).get("Authorization") === "Bearer tok-A"
         ? json(VIEW)
         : new Promise<Response>(() => {}),
@@ -424,5 +425,12 @@ describe("入力のページの部品（SC3-12.md #18・SC3-35）", () => {
     expect(await screen.findByText("読み込み中…")).toBeTruthy();
     expect(screen.queryByDisplayValue("A 社だけが知る根拠")).toBeNull();
     expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
+    // 作り直した部品が、新しい人のトークンで取りに行っている（「読み込み中…」のまま止まっていない）
+    const bAsked = fetchMock.mock.calls.filter(
+      (c) =>
+        authOf(c) === "Bearer tok-B" &&
+        String(c[0]) === "/api/ecus/1/assessment",
+    );
+    expect(bAsked).toHaveLength(1);
   });
 });
