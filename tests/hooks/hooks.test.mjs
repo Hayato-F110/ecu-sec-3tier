@@ -310,6 +310,62 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     const pricing = `${AWS_STEPS}出典：https://aws.amazon.com/kms/pricing/\n`;
     assert.equal(findStepsWithoutSource(pricing), null);
   });
+  // SC3-39：手順の文にサービスの名前がないのに、AWS の手順と見なして止めた（2026-11-25 に3回、11/26 に1回）。
+  // 返答の別の行に「Jira」があり、手順は PowerShell で鍵を作るもの（.NET の公式の資料の URL つき）
+  const LOCAL_STEPS =
+    "Jira の SC3-12 を進行中にしました。\n\n" +
+    "**オーナーの作業**\n" +
+    "1. スタートメニューから PowerShell を開く\n" +
+    "2. 下のコマンドを貼り付けて Enter キーを押す\n" +
+    "3. 表示された文字列を .env の JWT_SECRET_KEY の行に貼る\n" +
+    "出典：https://learn.microsoft.com/ja-jp/dotnet/api/system.security.cryptography.randomnumbergenerator\n";
+  test("手順の文にサービスの名前がなければ、別の行の Jira があっても止めない（SC3-39）", () => {
+    assert.equal(findStepsWithoutSource(LOCAL_STEPS), null);
+  });
+  test("手順の文に「コンソール」があれば、今までどおり AWS の出典を求める（SC3-39）", () => {
+    const console_ =
+      "Jira の課題も見てください。\n\n1. コンソールの左のメニューから「ユーザー」を開く\n2. 「作成」ボタンを押す\n";
+    // 空行の前の報告の行（Jira）を手がかりにせず、AWS の出典だけを求める（2回目のレビュー）
+    const reason = findStepsWithoutSource(console_) ?? "";
+    assert.match(reason, /aws/);
+    assert.doesNotMatch(reason, /atlassian/);
+  });
+  // SC3-39 の2回目のレビュー：空行の前の報告の行・表の前の報告の行で、新しく誤って止めない
+  test("空行の前の報告の行（Jira を更新しました）は手順の手がかりにしない（SC3-39）", () => {
+    const ghWithSource =
+      "Jira の SC3-12 を進行中にしました。\n\n" +
+      "1. GitHub の「Settings」タブを開く\n2. 「Branches」を選ぶ\n" +
+      "出典：https://docs.github.com/ja/repositories\n";
+    assert.equal(findStepsWithoutSource(ghWithSource), null);
+    const checkTable =
+      "PR を Jira に記録しました。\n\n| 確かめること | 結果 |\n| --- | --- |\n" +
+      "| 1 | 承認ボタンを押す |\n| 2 | 一覧を開く |\n";
+    assert.equal(findStepsWithoutSource(checkTable), null);
+  });
+  test("手順の文の「リージョン」は AWS の手がかりにする（SC3-39）", () => {
+    const region =
+      "AWS の準備です。\n\n### 手順\n\n1. 右上のリージョンを東京に切り替える\n" +
+      "2. 左のメニューから「ユーザー」を開く\n3. 「作成」ボタンを押す\n";
+    assert.match(findStepsWithoutSource(region) ?? "", /aws/);
+  });
+  // SC3-39 の1回目のレビュー：手順の行にサービスの名前がなく、空行の前の段落にだけあるときも止める
+  test("空行の前の段落にサービスの名前がある画面の手順は止める（SC3-39）", () => {
+    const awsIntro =
+      "AWS のコンソールで次の操作をしてください。\n\n" +
+      "1. 右上のメニューから「セキュリティ認証情報」を選ぶ\n2. 「アクセスキーを作成」ボタンを押す\n";
+    assert.match(findStepsWithoutSource(awsIntro) ?? "", /aws/);
+    const awsHeading =
+      "**オーナーの作業（AWS）**\n\n1. 左のメニューから「ユーザー」を開く\n2. 「作成」ボタンを押す\n";
+    assert.match(findStepsWithoutSource(awsHeading) ?? "", /aws/);
+    // GitHub の手順なのに AWS の出典を求める取り違えもしない
+    const gh = "GitHub のリポジトリで：\n\n1. 「Settings」タブを開く\n2. 「Branches」を選ぶ\n";
+    assert.match(findStepsWithoutSource(gh) ?? "", /github/);
+    assert.doesNotMatch(findStepsWithoutSource(gh) ?? "", /aws/);
+    const ghTable =
+      "GitHub のリポジトリの設定で：\n\n| 手順 | 操作 |\n| --- | --- |\n" +
+      "| 1 | 「Settings」タブを開く |\n| 2 | 「Branches」を選ぶ |\n";
+    assert.match(findStepsWithoutSource(ghTable) ?? "", /github/);
+  });
   test("公式でない URL（ブログ・まとめ）では通さない", () => {
     const blog = `${AWS_STEPS}出典：https://example.com/aws-kms-howto\n`;
     assert.notEqual(findStepsWithoutSource(blog), null);
