@@ -34,8 +34,11 @@ def cors_headers(res) -> list[str]:
 
 
 def url_for(api: Api, path: str) -> str:
-    """登録されたパスの {ecu} を、自社の ECU の番号に置きかえる"""
-    return path.replace("{ecu}", str(api.ecu(OWN_ECU).id))
+    """登録されたパスの {ecu} を、自社の ECU の番号に置きかえる。
+    ほかの場所の値が残ると、存在しない URL として 404 になり処理まで届かないので落とす"""
+    url = path.replace("{ecu}", str(api.ecu(OWN_ECU).id))
+    assert "{" not in url, f"置きかえていない場所の値がある：{path}"
+    return url
 
 
 def simple_request(client: TestClient, api: Api, method: str, path: str):
