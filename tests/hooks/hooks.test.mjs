@@ -310,6 +310,22 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     const pricing = `${AWS_STEPS}出典：https://aws.amazon.com/kms/pricing/\n`;
     assert.equal(findStepsWithoutSource(pricing), null);
   });
+  // SC3-39：手順の文にサービスの名前がないのに、AWS の手順と見なして止めた（2026-11-25 に3回、11/26 に1回）。
+  // 返答の別の行に「Jira」があり、手順は PowerShell で鍵を作るもの（.NET の公式の資料の URL つき）
+  const LOCAL_STEPS =
+    "Jira の SC3-12 を進行中にしました。\n\n" +
+    "**オーナーの作業**\n" +
+    "1. スタートメニューから PowerShell を開く\n" +
+    "2. 下のコマンドを貼り付けて Enter キーを押す\n" +
+    "3. 表示された文字列を .env の JWT_SECRET_KEY の行に貼る\n" +
+    "出典：https://learn.microsoft.com/ja-jp/dotnet/api/system.security.cryptography.randomnumbergenerator\n";
+  test("手順の文にサービスの名前がなければ、別の行の Jira があっても止めない（SC3-39）", () => {
+    assert.equal(findStepsWithoutSource(LOCAL_STEPS), null);
+  });
+  test("手順の文に「コンソール」があれば、今までどおり AWS の出典を求める（SC3-39）", () => {
+    const console_ = "Jira の課題も見てください。\n\n1. コンソールで「Budgets」を開く\n2. 「予算を作成」を押す\n";
+    assert.notEqual(findStepsWithoutSource(console_), null);
+  });
   test("公式でない URL（ブログ・まとめ）では通さない", () => {
     const blog = `${AWS_STEPS}出典：https://example.com/aws-kms-howto\n`;
     assert.notEqual(findStepsWithoutSource(blog), null);

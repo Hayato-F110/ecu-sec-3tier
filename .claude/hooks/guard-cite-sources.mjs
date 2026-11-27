@@ -252,9 +252,11 @@ export const findStepsWithoutSource = (text) => {
   const { steps, stepText } = countSteps(forSteps);
   if (steps < 2) return null;
   const providers = providersOf(stepText);
-  const missing = [...(providers.size > 0 ? providers : ["aws"])].filter(
-    (p) => !OFFICIAL[p].test(forUrls),
-  );
+  // 手順の文にサービスの名前（「コンソール」を含む）が1つもなければ、外部サービスの画面の手順ではない。
+  // 以前は AWS と見なして止めていたが、手元の手順（PowerShell で鍵を作るなど）を、返答の別の行の
+  // 「Jira」のせいで止めていた（2026-11-25 に3回・11/26 に1回。SC3-39）
+  if (providers.size === 0) return null;
+  const missing = [...providers].filter((p) => !OFFICIAL[p].test(forUrls));
   if (missing.length === 0) return null;
   return `外部サービスの画面の手順があるのに、公式の資料の URL（出典）がない（${missing.join("・")}）`;
 };
