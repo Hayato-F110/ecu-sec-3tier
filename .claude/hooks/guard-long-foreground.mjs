@@ -5,6 +5,10 @@
 //       CLAUDE.md の「応答を遅くしない」に書くだけでは止まらなかったので、仕組みで止める。
 // 止めたら、標準エラーの文が Claude に渡る（終了コード 2）。
 
+import { readFileSync } from "node:fs";
+
+import { textsOfThisTurn } from "./japanese-reply.mjs";
+
 const BLOCK = 2;
 
 // コマンドの先頭（行頭・; && || | ( { のあと）にある呼び出しだけを見る。コミットの文などの説明の中の言葉では止めない
@@ -89,6 +93,24 @@ export const findLongForeground = (command, background) => {
   return null;
 };
 
+// SC3-32：/code-review（Skill）も、終わるまで数分ほかの操作を止める。呼ぶ前に、目安の時間と
+// 「待つ間に進める課題：」の行を書いたかを、この回に書いた文で確かめる（2026-11-25 に書かずに呼んだ）
+const NEXT = /待つ間に進める課題[：:]\s*(.+)/;
+const isReview = (skill) => skill === "code-review" || skill.endsWith(":code-review");
+
+/** 止める理由（文字列）か、止めないなら null。skill は Skill の入力の skill の欄、text はこの回に書いた文 */
+export const findReviewWithoutNotice = (skill, text) => {
+  if (!isReview(String(skill ?? ""))) return null;
+  const plain = String(text ?? "");
+  if (!/目安/.test(plain)) return "/code-review を、目安の時間を書かずに呼ぼうとした";
+  const m = plain.match(NEXT);
+  if (m === null) return "/code-review を、「待つ間に進める課題：」の行を書かずに呼ぼうとした";
+  const next = m[1].trim();
+  if (/^なし\s*$/.test(next) || /^なし[^（(]/.test(next))
+    return "「待つ間に進める課題：なし」に理由（かっこ）がない";
+  return null;
+};
+
 const readStdin = async () => {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -97,6 +119,23 @@ const readStdin = async () => {
 
 const main = async () => {
   const input = JSON.parse((await readStdin()) || "{}");
+  if (input.tool_name === "Skill") {
+    let texts = [];
+    if (typeof input.transcript_path === "string") {
+      try {
+        texts = textsOfThisTurn(readFileSync(input.transcript_path, "utf8"));
+      } catch {
+        texts = [];
+      }
+    }
+    const reason = findReviewWithoutNotice(input.tool_input?.skill, texts.join("\n"));
+    if (reason === null) return;
+    process.stderr.write(
+      `止めました：${reason}（CLAUDE.md「応答を遅くしない」）。/code-review は終わるまで数分、ほかの操作とオーナーへの返事を止めます。` +
+        "呼ぶ前に「目安は〜分ほど」と「待つ間に進める課題：〜」（ないときは「なし（理由）」）を書いてください。\n",
+    );
+    process.exit(BLOCK);
+  }
   if (!["Bash", "PowerShell"].includes(input.tool_name)) return;
   const pipe = findCheckPipe(input.tool_input?.command);
   if (pipe !== null) {

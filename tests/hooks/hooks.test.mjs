@@ -19,7 +19,11 @@ import {
   findSprintMove,
   JIRA_KEY,
 } from "../../.claude/hooks/guard-jira-fields.mjs";
-import { findCheckPipe, findLongForeground } from "../../.claude/hooks/guard-long-foreground.mjs";
+import {
+  findCheckPipe,
+  findLongForeground,
+  findReviewWithoutNotice,
+} from "../../.claude/hooks/guard-long-foreground.mjs";
 import { findSkippedCheck } from "../../.claude/hooks/guard-no-verify.mjs";
 import { findEnglishLines } from "../../.claude/hooks/japanese-reply.mjs";
 import { findUndefinedTerms } from "../../.claude/hooks/plain-terms.mjs";
@@ -109,6 +113,30 @@ describe("guard-long-foreground", () => {
     assert.notEqual(findCheckPipe("uv run pytest | tail -5"), null);
     assert.equal(findCheckPipe("set -o pipefail; uv run pytest | tail -5"), null);
     assert.equal(findCheckPipe("uv run pytest > tmp/check.txt 2>&1"), null);
+  });
+  // SC3-32：/code-review は終わるまでほかの操作を止めるので、目安と待つ間の課題を先に伝える
+  const NOTICE = "目安は5分ほどです。待つ間に進める課題：SC3-39 の PR の説明";
+  test("/code-review を、目安と待つ間の課題を書かずに呼ぶと止める（SC3-32）", () => {
+    assert.notEqual(findReviewWithoutNotice("code-review", ""), null);
+    assert.notEqual(findReviewWithoutNotice("code-review", "レビューを呼びます。"), null);
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分ほどです。"), null);
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "待つ間に進める課題：SC3-39 の PR の説明"),
+      null,
+    );
+    // 「なし」には理由のかっこが要る
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：なし"), null);
+  });
+  test("目安と待つ間の課題があれば通す。code-review 以外の Skill は見ない（SC3-32）", () => {
+    assert.equal(findReviewWithoutNotice("code-review", NOTICE), null);
+    assert.equal(findReviewWithoutNotice("plugin:code-review", NOTICE), null);
+    assert.equal(
+      findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：なし（レビューが止めるため）"),
+      null,
+    );
+    assert.notEqual(findReviewWithoutNotice("plugin:code-review", ""), null);
+    assert.equal(findReviewWithoutNotice("anthropic-skills:pptx", ""), null);
+    assert.equal(findReviewWithoutNotice("story", ""), null);
   });
 });
 
