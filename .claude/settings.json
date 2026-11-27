@@ -63,6 +63,17 @@
         ]
       },
       {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-long-foreground.mjs"],
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "mcp__.*__(createJiraIssue|editJiraIssue|executeWrite|transitionJiraIssue)",
         "hooks": [
           {

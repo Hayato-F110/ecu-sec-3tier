@@ -5,6 +5,10 @@
 //       CLAUDE.md の「応答を遅くしない」に書くだけでは止まらなかったので、仕組みで止める。
 // 止めたら、標準エラーの文が Claude に渡る（終了コード 2）。
 
+import { readFileSync } from "node:fs";
+
+import { textsBeforeThisTool } from "./japanese-reply.mjs";
+
 const BLOCK = 2;
 
 // コマンドの先頭（行頭・; && || | ( { のあと）にある呼び出しだけを見る。コミットの文などの説明の中の言葉では止めない
@@ -89,6 +93,37 @@ export const findLongForeground = (command, background) => {
   return null;
 };
 
+// SC3-32：/code-review（Skill）も、終わるまで数分ほかの操作を止める。呼ぶ前に、目安の時間と
+// 「待つ間に進める課題：」の行を書いたかを、この回に書いた文で確かめる（2026-11-25 に書かずに呼んだ）
+// 「待つ間に進める課題：」と同じ行の中身（改行をまたいで次の行を読まない）
+const NEXT = /待つ間に進める課題[：:][ \t　]*(\S.*)/;
+// 目安の時間：「目安」のすぐあとに、数字か「数」と時間の単位（「目安は5分」「目安は数分」「目安は1時間」）。
+// 「分かりません」の「分」や、課題キー（SC3-40）の数字では通さない（SC3-32 の2回目のレビュー）
+const ESTIMATE = /目安[はがを]?[^。\n]{0,6}?(\d+|[０-９]+|数)\s*(分|秒|時間)/;
+const isReview = (skill) => {
+  const name = skill.replace(/^\//, "").toLowerCase();
+  return name === "code-review" || name.endsWith(":code-review");
+};
+
+/**
+ * 止める理由（文字列）か、止めないなら null。skill は Skill の入力の skill の欄。
+ * texts はこの回に書いた文（古い順の配列。文字列1つでもよい）。見るのはいちばん新しい文だけ
+ * （前の pytest のために書いた目安・待つ間の課題で通さない。SC3-32 のレビュー）
+ */
+export const findReviewWithoutNotice = (skill, texts) => {
+  if (!isReview(String(skill ?? ""))) return null;
+  const list = Array.isArray(texts) ? texts : [texts];
+  const plain = String(list.at(-1) ?? "");
+  if (!ESTIMATE.test(plain)) return "/code-review を、目安の時間（数字か「分」）を書かずに呼ぼうとした";
+  const m = plain.match(NEXT);
+  if (m === null) return "/code-review を、「待つ間に進める課題：」の行を書かずに呼ぼうとした";
+  const next = m[1].trim();
+  // 「なし」「特になし」「無し」には理由のかっこが要る
+  if (/^(特に)?(なし|無し)/.test(next) && !/^(特に)?(なし|無し)\s*[（(]/.test(next))
+    return "「待つ間に進める課題：なし」に理由（かっこ）がない";
+  return null;
+};
+
 const readStdin = async () => {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -97,6 +132,25 @@ const readStdin = async () => {
 
 const main = async () => {
   const input = JSON.parse((await readStdin()) || "{}");
+  if (input.tool_name === "Skill") {
+    // 会話の記録を読めないときは通す（この Hook は進め方の決まりで、秘密を守るものではないため）
+    if (typeof input.transcript_path !== "string") return;
+    // 見るのは、直前の道具の結果のあとに書いた文だけ（前の道具のために書いた知らせで通さない。
+    // SC3-32 の2回目のレビュー）。/code-review の直前に知らせの文を書く
+    let texts;
+    try {
+      texts = textsBeforeThisTool(readFileSync(input.transcript_path, "utf8"));
+    } catch {
+      return;
+    }
+    const reason = findReviewWithoutNotice(input.tool_input?.skill, texts);
+    if (reason === null) return;
+    process.stderr.write(
+      `止めました：${reason}（CLAUDE.md「応答を遅くしない」）。/code-review は終わるまで数分、ほかの操作とオーナーへの返事を止めます。` +
+        "呼ぶ前に「目安は〜分ほど」と「待つ間に進める課題：〜」（ないときは「なし（理由）」）を書いてください。\n",
+    );
+    process.exit(BLOCK);
+  }
   if (!["Bash", "PowerShell"].includes(input.tool_name)) return;
   const pipe = findCheckPipe(input.tool_input?.command);
   if (pipe !== null) {

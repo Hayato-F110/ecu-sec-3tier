@@ -2,7 +2,10 @@
 // 実行：node --test tests/hooks/
 // nori-adventure の tests/hooks/*.test.ts（Vitest）から、このプロジェクトで使う判定を選んで移した。
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { after, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { checkCli, checkTerraform } from "../../.claude/hooks/guard-aws-cost.mjs";
 import {
@@ -19,7 +22,11 @@ import {
   findSprintMove,
   JIRA_KEY,
 } from "../../.claude/hooks/guard-jira-fields.mjs";
-import { findCheckPipe, findLongForeground } from "../../.claude/hooks/guard-long-foreground.mjs";
+import {
+  findCheckPipe,
+  findLongForeground,
+  findReviewWithoutNotice,
+} from "../../.claude/hooks/guard-long-foreground.mjs";
 import { findSkippedCheck } from "../../.claude/hooks/guard-no-verify.mjs";
 import { findEnglishLines } from "../../.claude/hooks/japanese-reply.mjs";
 import { findUndefinedTerms } from "../../.claude/hooks/plain-terms.mjs";
@@ -109,6 +116,105 @@ describe("guard-long-foreground", () => {
     assert.notEqual(findCheckPipe("uv run pytest | tail -5"), null);
     assert.equal(findCheckPipe("set -o pipefail; uv run pytest | tail -5"), null);
     assert.equal(findCheckPipe("uv run pytest > tmp/check.txt 2>&1"), null);
+  });
+  // SC3-32：/code-review は終わるまでほかの操作を止めるので、目安と待つ間の課題を先に伝える
+  const NOTICE = "目安は5分ほどです。待つ間に進める課題：SC3-39 の PR の説明";
+  test("見るのはいちばん新しい文だけ。前の文の目安・待つ間の課題では通さない（SC3-32 のレビュー）", () => {
+    // 判定の関数には、この回の文を古い順の配列で渡す
+    const old = "pytest は目安3分です。待つ間に進める課題：SC3-40";
+    assert.notEqual(findReviewWithoutNotice("code-review", [old, "レビューを呼びます。"]), null);
+    assert.equal(findReviewWithoutNotice("code-review", ["待つ間に進める課題：なし", NOTICE]), null);
+  });
+  test("目安には数字か「数」と時間の単位が要る。「なし」のかっこの前の空白は許す（SC3-32 のレビュー）", () => {
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "目安を伝えます。待つ間に進める課題：SC3-40"),
+      null,
+    );
+    // 「分かりません」の「分」や、課題キーの数字では通さない（2回目のレビュー）
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "目安は分かりません。待つ間に進める課題：SC3-40"),
+      null,
+    );
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "目安は未定、待つ間に進める課題：SC3-40"),
+      null,
+    );
+    // 「待つ間に進める課題：」のあとが空なら、次の行を課題と読まない
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：\n次の行"), null);
+    // 「特になし」「無し」にも理由が要る
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：特になし"), null);
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：無し"), null);
+    assert.equal(
+      findReviewWithoutNotice("code-review", "目安は1時間。待つ間に進める課題：特になし（止まるため）"),
+      null,
+    );
+    assert.equal(
+      findReviewWithoutNotice("code-review", "目安は数分。待つ間に進める課題：なし （止まるため）"),
+      null,
+    );
+  });
+  test("先頭の「/」や大文字の名前も code-review と見なす（SC3-32 のレビュー）", () => {
+    assert.notEqual(findReviewWithoutNotice("/code-review", ""), null);
+    assert.notEqual(findReviewWithoutNotice("Code-Review", ""), null);
+  });
+  // Hook を実際に動かす：入力（Skill の tool_input.skill）と会話の記録の読み方まで確かめる
+  const runHook = (input) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL("../../.claude/hooks/guard-long-foreground.mjs", import.meta.url))], {
+      input: JSON.stringify(input),
+      encoding: "utf8",
+    });
+  const testDir = fileURLToPath(new URL(`../../tmp/hook-tests-${process.pid}/`, import.meta.url));
+  after(() => rmSync(testDir, { recursive: true, force: true }));
+  const said = (text) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  const toolResult = { type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } };
+  /** 会話の記録の見本。文字列なら1つの文、配列なら記録の行を古い順に */
+  const transcriptWith = (entries) => {
+    mkdirSync(testDir, { recursive: true });
+    const path = `${testDir}transcript-${Math.random().toString(36).slice(2)}.jsonl`;
+    const list = Array.isArray(entries) ? entries : [said(entries)];
+    writeFileSync(path, list.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    return path;
+  };
+  test("Hook を動かすと、目安なしの /code-review は終了コード 2、ありは 0（SC3-32 のレビュー）", () => {
+    const skill = { tool_name: "Skill", tool_input: { skill: "code-review", args: "medium" } };
+    const blocked = runHook({ ...skill, transcript_path: transcriptWith("レビューを呼びます。") });
+    assert.equal(blocked.status, 2);
+    assert.match(blocked.stderr, /目安/);
+    assert.equal(runHook({ ...skill, transcript_path: transcriptWith(NOTICE) }).status, 0);
+    // 前の道具のために書いた知らせのあと、何も書かずに呼ぶと止める（2回目のレビュー）
+    const old = "pytest は目安3分です。待つ間に進める課題：SC3-40";
+    assert.equal(runHook({ ...skill, transcript_path: transcriptWith([said(old), toolResult]) }).status, 2);
+    // 道具の結果のあとに書けば通す
+    const fresh = transcriptWith([said(old), toolResult, said(NOTICE)]);
+    assert.equal(runHook({ ...skill, transcript_path: fresh }).status, 0);
+    // 会話の記録を読めないときは通す（進め方の決まりで、秘密を守るものではないため）
+    assert.equal(runHook({ ...skill, transcript_path: "no/such/file.jsonl" }).status, 0);
+    assert.equal(runHook(skill).status, 0);
+    // code-review 以外の Skill は見ない
+    const other = { tool_name: "Skill", tool_input: { skill: "story" } };
+    assert.equal(runHook({ ...other, transcript_path: transcriptWith("") }).status, 0);
+  });
+  test("/code-review を、目安と待つ間の課題を書かずに呼ぶと止める（SC3-32）", () => {
+    assert.notEqual(findReviewWithoutNotice("code-review", ""), null);
+    assert.notEqual(findReviewWithoutNotice("code-review", "レビューを呼びます。"), null);
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分ほどです。"), null);
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "待つ間に進める課題：SC3-39 の PR の説明"),
+      null,
+    );
+    // 「なし」には理由のかっこが要る
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：なし"), null);
+  });
+  test("目安と待つ間の課題があれば通す。code-review 以外の Skill は見ない（SC3-32）", () => {
+    assert.equal(findReviewWithoutNotice("code-review", NOTICE), null);
+    assert.equal(findReviewWithoutNotice("plugin:code-review", NOTICE), null);
+    assert.equal(
+      findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：なし（レビューが止めるため）"),
+      null,
+    );
+    assert.notEqual(findReviewWithoutNotice("plugin:code-review", ""), null);
+    assert.equal(findReviewWithoutNotice("anthropic-skills:pptx", ""), null);
+    assert.equal(findReviewWithoutNotice("story", ""), null);
   });
 });
 
