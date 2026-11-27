@@ -39,6 +39,5 @@
 - Jira の開始日（customfield_10015）は遷移と一緒に設定できない。遷移のあと `editJiraIssue` で
 - 作業時間：前回の `/end-day` のコミットの時刻から数える `node tmp/worktime-since.mjs <時刻> < /dev/null`
 - 画面のテスト（Vitest）は、作業フォルダのドライブ名が小文字の `c:` だと全部落ちる。PowerShell で `Set-Location "C:\Users\..."`（大文字）にしてから流す
-- Hook `guard-cite-sources` は、返答にサービスの名前と番号付きの手順があると、AWS の手順と見なして止めることがある（SC3-39）。直るまでは、手順の返答にサービスの名前を混ぜない
 - `/code-review` は終わるまで待つ形で動く（数分）。呼ぶ前に「目安の時間」と「待つ間に進める課題」を書く（仕組みは SC3-32）
 - Starlette の公式サイト（www.starlette.io）は 11/26 に名前の解決に失敗した。手元の `backend/.venv/Lib/site-packages/starlette/` のソースで確かめられる

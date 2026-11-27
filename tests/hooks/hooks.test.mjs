@@ -323,8 +323,27 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     assert.equal(findStepsWithoutSource(LOCAL_STEPS), null);
   });
   test("手順の文に「コンソール」があれば、今までどおり AWS の出典を求める（SC3-39）", () => {
-    const console_ = "Jira の課題も見てください。\n\n1. コンソールで「Budgets」を開く\n2. 「予算を作成」を押す\n";
+    const console_ =
+      "Jira の課題も見てください。\n\n1. コンソールの左のメニューから「ユーザー」を開く\n2. 「作成」ボタンを押す\n";
     assert.notEqual(findStepsWithoutSource(console_), null);
+  });
+  // SC3-39 の1回目のレビュー：手順の行にサービスの名前がなく、空行の前の段落にだけあるときも止める
+  test("空行の前の段落にサービスの名前がある画面の手順は止める（SC3-39）", () => {
+    const awsIntro =
+      "AWS のコンソールで次の操作をしてください。\n\n" +
+      "1. 右上のメニューから「セキュリティ認証情報」を選ぶ\n2. 「アクセスキーを作成」ボタンを押す\n";
+    assert.match(findStepsWithoutSource(awsIntro) ?? "", /aws/);
+    const awsHeading =
+      "**オーナーの作業（AWS）**\n\n1. 左のメニューから「ユーザー」を開く\n2. 「作成」ボタンを押す\n";
+    assert.match(findStepsWithoutSource(awsHeading) ?? "", /aws/);
+    // GitHub の手順なのに AWS の出典を求める取り違えもしない
+    const gh = "GitHub のリポジトリで：\n\n1. 「Settings」タブを開く\n2. 「Branches」を選ぶ\n";
+    assert.match(findStepsWithoutSource(gh) ?? "", /github/);
+    assert.doesNotMatch(findStepsWithoutSource(gh) ?? "", /aws/);
+    const ghTable =
+      "GitHub の設定です。\n\n| 手順 | 操作 |\n| --- | --- |\n" +
+      "| 1 | 「Settings」タブを開く |\n| 2 | 「Branches」を選ぶ |\n";
+    assert.match(findStepsWithoutSource(ghTable) ?? "", /github/);
   });
   test("公式でない URL（ブログ・まとめ）では通さない", () => {
     const blog = `${AWS_STEPS}出典：https://example.com/aws-kms-howto\n`;

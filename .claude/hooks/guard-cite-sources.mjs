@@ -196,7 +196,11 @@ const countSteps = (text) => {
     let j = i;
     while (j < lines.length && LIST_ITEM.test(lines[j])) j += 1;
     const { lines: block, labeled } = withoutRowLabels(lines.slice(i, j));
-    const intro = i > 0 ? lines[i - 1] : "";
+    // 手順の前の段落：空行を飛ばして、いちばん近い空でない行（「AWS のコンソールで：」＋空行＋手順の形。
+    // 見出しと番号つきの手順のあいだには空行を入れることが多い。SC3-39 の1回目のレビュー）
+    let k = i - 1;
+    while (k >= 0 && lines[k].trim() === "") k -= 1;
+    const intro = k >= 0 ? lines[k] : "";
     const hasClue = (l) => SERVICE.test(l) || CHROME.test(l);
     const onScreen = block.some(hasClue);
     // 表（箇条書きのすぐあとに続く表も）の見出しの行か、表の直前の行（「GitHub のリポジトリで：」）に
