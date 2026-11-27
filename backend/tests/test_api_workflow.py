@@ -447,6 +447,23 @@ def test_approve_after_items_increased_is_409(api: Api) -> None:
     assert snapshot(api.session) == before
 
 
+def test_self_review_is_403_even_when_incomplete(api: Api) -> None:
+    """職務分離（403）は、全項目の確かめ（409）より先（調べる順番。2回目のレビュー）"""
+    ecu = api.ecu(DRAFT)
+    assert submit(api, ecu).status_code == 200
+    make_incomplete(api, ecu, "対策項目が増えた")
+    set_role(api.session, A_EDITOR, "approver")
+    res = approve(api, ecu, A_EDITOR)
+    assert (res.status_code, res.json()["detail"]) == (403, SELF_REVIEW)
+
+
+def test_cannot_review_when_items_increased(api: Api) -> None:
+    """承認待ちのあいだに項目が増えたら、承認のボタンを出さない（押しても 409 になるため）"""
+    ecu = api.ecu(PENDING)
+    make_incomplete(api, ecu, "対策項目が増えた")
+    assert api.get(assessment_url(ecu), A_APPROVER).json()["can_review"] is False
+
+
 # ---- #14 確定のときの DB の制約違反は 409 ----
 
 
