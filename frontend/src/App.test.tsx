@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
+import { App, AssessmentPage } from "./App";
 
 // docs/test-plans/SC3-11.md の #17、SC3-12.md の #14・#16・#17・#18
 
@@ -314,5 +314,123 @@ describe("2回目のレビューの直し", () => {
     expect(
       await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
     ).toBeTruthy();
+  });
+});
+
+describe("入力画面でログインした人が変わったとき（SC3-12.md #18・SC3-35）", () => {
+  // 期限切れ（401）で画面全体がログイン画面に替わる流れの見張り。
+  // 入力の部品の作り直し（key）は、下の「入力のページの部品」で確かめる
+  it("別の人でログインし直すと自分の一覧に移り、前の人の入力画面と入力を出さない", async () => {
+    const ECU = {
+      id: 1,
+      name: "ゲートウェイ ECU",
+      part_no: "DMY-A001",
+      vehicle_model: "架空セダン",
+      latest_version: 1,
+      latest_status: "draft",
+    };
+    const VIEW = {
+      assessment: { id: 7, version: 1, status: "draft" },
+      entries: [
+        {
+          item_id: 1,
+          code: "SB",
+          title: "セキュアブート",
+          status: "done",
+          evidence: "ROM の公開鍵で署名を検証",
+          planned_date: null,
+        },
+      ],
+    };
+    // 会社ごとの分離のとおり：A 社の ECU は A 社の人（tok-1）にだけ返す。
+    // B 社の人（tok-2）の一覧は空、A 社の ECU は 404。保存は 401（期限切れ）
+    const fetchMock = stubApi((url, init) => {
+      const isA =
+        new Headers(init?.headers).get("Authorization") === "Bearer tok-1";
+      if (url === "/api/ecus") return json(isA ? [ECU] : []);
+      if (url === "/api/ecus/1/assessment")
+        return isA ? json(VIEW) : json({ detail: "見つかりません" }, 404);
+      if (url === "/api/ecus/1/draft")
+        return json({ detail: "ログインが必要です" }, 401);
+      return json([]);
+    });
+    renderAt("/login");
+    await logIn("a-editor@example.com");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    const evidence = await screen.findByLabelText("セキュアブート の根拠");
+    fireEvent.change(evidence, { target: { value: "A 社だけが知る根拠" } });
+    fireEvent.click(screen.getByRole("button", { name: "下書きを保存" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "ログインしてください",
+    );
+
+    await logIn("b-editor@example.com");
+    // 別の人は元のページ（A 社の入力画面）に戻さず、自分の最初のページへ
+    expect(
+      await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("heading", { name: "対策状況の入力" }),
+    ).toBeNull();
+    expect(screen.queryByDisplayValue("A 社だけが知る根拠")).toBeNull();
+    // 根拠は入力欄の値なので、文字（queryByText）では見つからない。値で探す
+    expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
+    // B 社の人のトークンで、A 社の ECU の入力を取りに行っていない
+    const bAsked = fetchMock.mock.calls.filter(
+      (c) =>
+        authOf(c) === "Bearer tok-2" && String(c[0]).startsWith("/api/ecus/1"),
+    );
+    expect(bAsked).toEqual([]);
+  });
+});
+
+describe("入力のページの部品（SC3-12.md #18・SC3-35）", () => {
+  it("トークンが替わったら部品を作り直し、新しい応答が来るまで前の人の入力を出さない", async () => {
+    const VIEW = {
+      assessment: { id: 7, version: 1, status: "draft" },
+      entries: [
+        {
+          item_id: 1,
+          code: "SB",
+          title: "セキュアブート",
+          status: "done",
+          evidence: "ROM の公開鍵で署名を検証",
+          planned_date: null,
+        },
+      ],
+    };
+    // tok-A には入力の内容を返し、tok-B の取得は返事が来ないままにする
+    const fetchMock = stubApi((_url, init) =>
+      new Headers(init?.headers).get("Authorization") === "Bearer tok-A"
+        ? json(VIEW)
+        : new Promise<Response>(() => {}),
+    );
+    const page = (token: string) => (
+      <MemoryRouter initialEntries={["/ecus/1"]}>
+        <Routes>
+          <Route
+            path="/ecus/:ecuId"
+            element={<AssessmentPage token={token} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+    const { rerender } = render(page("tok-A"));
+    const evidence = await screen.findByLabelText("セキュアブート の根拠");
+    fireEvent.change(evidence, { target: { value: "A 社だけが知る根拠" } });
+
+    rerender(page("tok-B"));
+    expect(await screen.findByText("読み込み中…")).toBeTruthy();
+    expect(screen.queryByDisplayValue("A 社だけが知る根拠")).toBeNull();
+    expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
+    // 作り直した部品が、新しい人のトークンで取りに行っている（「読み込み中…」のまま止まっていない）
+    const bAsked = fetchMock.mock.calls.filter(
+      (c) =>
+        authOf(c) === "Bearer tok-B" &&
+        String(c[0]) === "/api/ecus/1/assessment",
+    );
+    expect(bAsked).toHaveLength(1);
   });
 });
