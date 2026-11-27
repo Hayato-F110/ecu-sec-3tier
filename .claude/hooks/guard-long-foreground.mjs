@@ -7,7 +7,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { textsOfThisTurn } from "./japanese-reply.mjs";
+import { textsBeforeThisTool } from "./japanese-reply.mjs";
 
 const BLOCK = 2;
 
@@ -95,9 +95,11 @@ export const findLongForeground = (command, background) => {
 
 // SC3-32：/code-review（Skill）も、終わるまで数分ほかの操作を止める。呼ぶ前に、目安の時間と
 // 「待つ間に進める課題：」の行を書いたかを、この回に書いた文で確かめる（2026-11-25 に書かずに呼んだ）
-const NEXT = /待つ間に進める課題[：:]\s*(.+)/;
-// 目安の時間：「目安」のあと（同じ文の中）に数字か「分」（「目安は5分」「目安は数分」）
-const ESTIMATE = /目安[^。\n]*?(\d|[０-９]|分)/;
+// 「待つ間に進める課題：」と同じ行の中身（改行をまたいで次の行を読まない）
+const NEXT = /待つ間に進める課題[：:][ \t　]*(\S.*)/;
+// 目安の時間：「目安」のすぐあとに、数字か「数」と時間の単位（「目安は5分」「目安は数分」「目安は1時間」）。
+// 「分かりません」の「分」や、課題キー（SC3-40）の数字では通さない（SC3-32 の2回目のレビュー）
+const ESTIMATE = /目安[はがを]?[^。\n]{0,6}?(\d+|[０-９]+|数)\s*(分|秒|時間)/;
 const isReview = (skill) => {
   const name = skill.replace(/^\//, "").toLowerCase();
   return name === "code-review" || name.endsWith(":code-review");
@@ -116,7 +118,8 @@ export const findReviewWithoutNotice = (skill, texts) => {
   const m = plain.match(NEXT);
   if (m === null) return "/code-review を、「待つ間に進める課題：」の行を書かずに呼ぼうとした";
   const next = m[1].trim();
-  if (next.startsWith("なし") && !/^なし\s*[（(]/.test(next))
+  // 「なし」「特になし」「無し」には理由のかっこが要る
+  if (/^(特に)?(なし|無し)/.test(next) && !/^(特に)?(なし|無し)\s*[（(]/.test(next))
     return "「待つ間に進める課題：なし」に理由（かっこ）がない";
   return null;
 };
@@ -132,9 +135,11 @@ const main = async () => {
   if (input.tool_name === "Skill") {
     // 会話の記録を読めないときは通す（この Hook は進め方の決まりで、秘密を守るものではないため）
     if (typeof input.transcript_path !== "string") return;
+    // 見るのは、直前の道具の結果のあとに書いた文だけ（前の道具のために書いた知らせで通さない。
+    // SC3-32 の2回目のレビュー）。/code-review の直前に知らせの文を書く
     let texts;
     try {
-      texts = textsOfThisTurn(readFileSync(input.transcript_path, "utf8"));
+      texts = textsBeforeThisTool(readFileSync(input.transcript_path, "utf8"));
     } catch {
       return;
     }

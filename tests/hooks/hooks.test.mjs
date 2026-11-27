@@ -2,7 +2,10 @@
 // 実行：node --test tests/hooks/
 // nori-adventure の tests/hooks/*.test.ts（Vitest）から、このプロジェクトで使う判定を選んで移した。
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { after, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { checkCli, checkTerraform } from "../../.claude/hooks/guard-aws-cost.mjs";
 import {
@@ -19,10 +22,6 @@ import {
   findSprintMove,
   JIRA_KEY,
 } from "../../.claude/hooks/guard-jira-fields.mjs";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import {
   findCheckPipe,
   findLongForeground,
@@ -126,9 +125,27 @@ describe("guard-long-foreground", () => {
     assert.notEqual(findReviewWithoutNotice("code-review", [old, "レビューを呼びます。"]), null);
     assert.equal(findReviewWithoutNotice("code-review", ["待つ間に進める課題：なし", NOTICE]), null);
   });
-  test("目安には数字か「分」が要る。「なし」のかっこの前の空白は許す（SC3-32 のレビュー）", () => {
+  test("目安には数字か「数」と時間の単位が要る。「なし」のかっこの前の空白は許す（SC3-32 のレビュー）", () => {
     assert.notEqual(
       findReviewWithoutNotice("code-review", "目安を伝えます。待つ間に進める課題：SC3-40"),
+      null,
+    );
+    // 「分かりません」の「分」や、課題キーの数字では通さない（2回目のレビュー）
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "目安は分かりません。待つ間に進める課題：SC3-40"),
+      null,
+    );
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "目安は未定、待つ間に進める課題：SC3-40"),
+      null,
+    );
+    // 「待つ間に進める課題：」のあとが空なら、次の行を課題と読まない
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：\n次の行"), null);
+    // 「特になし」「無し」にも理由が要る
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：特になし"), null);
+    assert.notEqual(findReviewWithoutNotice("code-review", "目安は5分。待つ間に進める課題：無し"), null);
+    assert.equal(
+      findReviewWithoutNotice("code-review", "目安は1時間。待つ間に進める課題：特になし（止まるため）"),
       null,
     );
     assert.equal(
@@ -146,12 +163,16 @@ describe("guard-long-foreground", () => {
       input: JSON.stringify(input),
       encoding: "utf8",
     });
-  const transcriptWith = (text) => {
-    const dir = fileURLToPath(new URL("../../tmp/hook-tests/", import.meta.url));
-    mkdirSync(dir, { recursive: true });
-    const path = `${dir}transcript-${process.pid}-${Math.random().toString(36).slice(2)}.jsonl`;
-    const entry = { type: "assistant", message: { content: [{ type: "text", text }] } };
-    writeFileSync(path, `${JSON.stringify(entry)}\n`);
+  const testDir = fileURLToPath(new URL(`../../tmp/hook-tests-${process.pid}/`, import.meta.url));
+  after(() => rmSync(testDir, { recursive: true, force: true }));
+  const said = (text) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  const toolResult = { type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } };
+  /** 会話の記録の見本。文字列なら1つの文、配列なら記録の行を古い順に */
+  const transcriptWith = (entries) => {
+    mkdirSync(testDir, { recursive: true });
+    const path = `${testDir}transcript-${Math.random().toString(36).slice(2)}.jsonl`;
+    const list = Array.isArray(entries) ? entries : [said(entries)];
+    writeFileSync(path, list.map((e) => JSON.stringify(e)).join("\n") + "\n");
     return path;
   };
   test("Hook を動かすと、目安なしの /code-review は終了コード 2、ありは 0（SC3-32 のレビュー）", () => {
@@ -160,6 +181,12 @@ describe("guard-long-foreground", () => {
     assert.equal(blocked.status, 2);
     assert.match(blocked.stderr, /目安/);
     assert.equal(runHook({ ...skill, transcript_path: transcriptWith(NOTICE) }).status, 0);
+    // 前の道具のために書いた知らせのあと、何も書かずに呼ぶと止める（2回目のレビュー）
+    const old = "pytest は目安3分です。待つ間に進める課題：SC3-40";
+    assert.equal(runHook({ ...skill, transcript_path: transcriptWith([said(old), toolResult]) }).status, 2);
+    // 道具の結果のあとに書けば通す
+    const fresh = transcriptWith([said(old), toolResult, said(NOTICE)]);
+    assert.equal(runHook({ ...skill, transcript_path: fresh }).status, 0);
     // 会話の記録を読めないときは通す（進め方の決まりで、秘密を守るものではないため）
     assert.equal(runHook({ ...skill, transcript_path: "no/such/file.jsonl" }).status, 0);
     assert.equal(runHook(skill).status, 0);
