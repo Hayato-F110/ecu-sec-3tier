@@ -1,13 +1,15 @@
-"""ECU の一覧、対策状況の取得、下書きの保存（サプライヤ用）。
+"""ECU の一覧、対策状況の取得、下書きの保存、承認フロー（申請・承認・差し戻し）（サプライヤ用）。
 
 守りの決まり（CLAUDE.md）：
 - 会社ごとの絞り込みは app/deps.py の own_ecu（他社も存在しない番号も 404）
 - 承認済みの版は書き換えない。更新は新しい版（番号＋1）の下書きを作る
-- 保存は監査ログに残す
+- 状態の変更は API で検証する（申請者本人は承認・差し戻しできない、差し戻しには理由が必須）
+- 保存と状態の変更は監査ログに残す
 """
 
 import ipaddress
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -15,7 +17,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.deps import Db, OwnEcu, SupplierUser, editor_of_own_ecu
+from app.deps import Db, OwnEcu, SupplierUser, approver_of_own_ecu, editor_of_own_ecu
 from app.models import (
     OPEN_STATUSES,
     Assessment,
@@ -25,7 +27,16 @@ from app.models import (
     MeasureItem,
     User,
 )
-from app.schemas import AssessmentOut, AssessmentView, DraftIn, EcuSummary, EntryOut
+from app.schemas import (
+    AssessmentOut,
+    AssessmentView,
+    DraftIn,
+    EcuSummary,
+    EntryOut,
+    NoFieldsIn,
+    RejectIn,
+    has_visible,
+)
 
 router = APIRouter(prefix="/api/ecus", tags=["ecus"])
 
@@ -52,7 +63,18 @@ def latest_approved(db: Session, ecu_id: int) -> Assessment | None:
     ).one_or_none()
 
 
-def view_of(db: Session, assessment: Assessment | None) -> AssessmentView:
+def can_review(assessment: Assessment | None, user: User | None) -> bool:
+    """承認者で、申請者本人でなく、承認待ちのときだけ承認・差し戻しできる（画面のボタンの出し分け）"""
+    return (
+        assessment is not None
+        and user is not None
+        and user.role == "approver"
+        and assessment.status == "pending"
+        and assessment.submitted_by != user.id
+    )
+
+
+def view_of(db: Session, assessment: Assessment | None, user: User | None = None) -> AssessmentView:
     # 対策項目を起点にする：まだ入力のない項目も、空のまま並べて返す（画面が全項目を出せるように）。
     # 版がまだない ECU でも同じ。空の一覧を返すと、画面に入力欄が出ず、最初の下書きを作れない
     rows: Sequence[tuple[MeasureItem, AssessmentEntry | None]]
@@ -78,7 +100,16 @@ def view_of(db: Session, assessment: Assessment | None) -> AssessmentView:
     return AssessmentView(
         assessment=None
         if assessment is None
-        else AssessmentOut(id=assessment.id, version=assessment.version, status=assessment.status),
+        else AssessmentOut(
+            id=assessment.id,
+            version=assessment.version,
+            status=assessment.status,
+            reject_reason=assessment.reject_reason if assessment.status == "rejected" else None,
+        ),
+        # 全項目が入力済みでないと承認は 409 になるので、ボタンも出さない（差し戻しで直してもらう）
+        can_review=assessment is not None
+        and can_review(assessment, user)
+        and is_complete(db, assessment),
         entries=[
             EntryOut(
                 item_id=m.id,
@@ -146,9 +177,9 @@ def list_ecus(user: SupplierUser, db: Db) -> list[EcuSummary]:
 
 
 @router.get("/{ecu_id}/assessment", response_model=AssessmentView)
-def get_assessment(ecu: OwnEcu, db: Db) -> AssessmentView:
+def get_assessment(ecu: OwnEcu, user: SupplierUser, db: Db) -> AssessmentView:
     """作業中の版があればそれ、なければ最新の承認済みの版。"""
-    return view_of(db, open_version(db, ecu.id) or latest_approved(db, ecu.id))
+    return view_of(db, open_version(db, ecu.id) or latest_approved(db, ecu.id), user)
 
 
 @router.put("/{ecu_id}/draft", response_model=AssessmentView)
@@ -184,7 +215,7 @@ def save_draft(
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="ほかの保存と重なりました。やり直してください"
         ) from exc
-    return view_of(db, draft)
+    return view_of(db, draft, user)
 
 
 def write_draft(
@@ -246,3 +277,116 @@ def new_version(db: Session, ecu_id: int) -> Assessment:
             )
         db.flush()
     return draft
+
+
+# ---- 承認フロー（docs/test-plans/SC3-14.md） ----
+# 調べる順番：401 → 会社の種類と役割（403）→ 自社の ECU か（404）→ 操作の役割（403）
+# → 本文の形（422）→ 状態（409）→ 承認・差し戻しなら職務分離（403）
+# → 申請・承認なら全項目が入力済みか（409）
+
+Editor = Annotated[tuple[Ecu, User], Depends(editor_of_own_ecu)]
+Approver = Annotated[tuple[Ecu, User], Depends(approver_of_own_ecu)]
+
+
+def locked_open_version(db: Session, ecu: Ecu, expected: str, detail: str) -> Assessment:
+    """ECU の行と作業中の版をロックしてから状態を確かめる（同時の操作を1つずつにする）"""
+    db.execute(select(Ecu.id).where(Ecu.id == ecu.id).with_for_update())
+    current = open_version(db, ecu.id, lock=True)
+    if current is None or current.status != expected:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=detail)
+    return current
+
+
+def is_complete(db: Session, assessment: Assessment) -> bool:
+    """全部の対策項目に、状態・空白だけでない根拠、対応中・未対応なら対応予定日がある（決めたこと6）"""
+    entries = {
+        e.item_id: e
+        for e in db.scalars(
+            select(AssessmentEntry).where(AssessmentEntry.assessment_id == assessment.id)
+        )
+    }
+    for item_id in db.scalars(select(MeasureItem.id)):
+        e = entries.get(item_id)
+        # 行がない＝状態が未選択（行の状態・根拠は DB の NOT NULL で空にならない）
+        if e is None or not has_visible(e.evidence):
+            return False
+        if e.status in ("in_progress", "not_done") and e.planned_date is None:
+            return False
+    return True
+
+
+def not_own_submission(assessment: Assessment, user: User) -> None:
+    """職務分離：申請者本人は承認も差し戻しもできない（決めたこと1）"""
+    if assessment.submitted_by == user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="申請者本人は承認・差し戻しできません"
+        )
+
+
+def commit_with_log(
+    db: Session, user: User, action: str, assessment: Assessment, request: Request
+) -> None:
+    """監査ログを足して確定する。DB の制約の違反（同時の操作など）は 409 にし、何も残さない"""
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action=action,
+            target=f"assessment:{assessment.id}",
+            ip=client_ip(request),
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="ほかの操作と重なりました。やり直してください"
+        ) from exc
+
+
+@router.post("/{ecu_id}/submit", response_model=AssessmentView)
+def submit(
+    target: Editor, db: Db, request: Request, body: NoFieldsIn | None = None
+) -> AssessmentView:
+    """承認申請。申請者・申請日時は、いつも今の人・今の時刻に書き直す（SC3-25）"""
+    ecu, user = target
+    current = locked_open_version(db, ecu, "draft", "申請できるのは下書きの版だけです")
+    if not is_complete(db, current):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="未入力の項目があります")
+    current.status = "pending"
+    current.submitted_by = user.id
+    current.submitted_at = datetime.now(UTC)
+    commit_with_log(db, user, "submit", current, request)
+    return view_of(db, current, user)
+
+
+@router.post("/{ecu_id}/approve", response_model=AssessmentView)
+def approve(
+    target: Approver, db: Db, request: Request, body: NoFieldsIn | None = None
+) -> AssessmentView:
+    """承認。メーカーの確認状況は「未確認」から始める"""
+    ecu, user = target
+    current = locked_open_version(db, ecu, "pending", "承認待ちの版がありません")
+    not_own_submission(current, user)
+    # 承認待ちのあいだに対策項目が増えることがあるので、承認でも確かめ直す
+    # （空のセルのまま承認しない）。職務分離（403）のあと
+    if not is_complete(db, current):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="未入力の項目があります")
+    current.status = "approved"
+    current.approved_by = user.id
+    current.approved_at = datetime.now(UTC)
+    current.review_status = "unreviewed"
+    commit_with_log(db, user, "approve", current, request)
+    return view_of(db, current, user)
+
+
+@router.post("/{ecu_id}/reject", response_model=AssessmentView)
+def reject(body: RejectIn, target: Approver, db: Db, request: Request) -> AssessmentView:
+    """差し戻し。理由は最後のものだけを残す（決めたこと4）。理由は監査ログに入れない"""
+    ecu, user = target
+    current = locked_open_version(db, ecu, "pending", "承認待ちの版がありません")
+    not_own_submission(current, user)
+    current.status = "rejected"
+    current.reject_reason = body.reason
+    commit_with_log(db, user, "reject", current, request)
+    return view_of(db, current, user)

@@ -93,6 +93,15 @@ def ecu_probes(s: Session) -> list[Params]:
     return [ecu_own(s), ecu_missing(s), {"ecu_id": make_ecu(s, oem, OEM_OWNED_PART_NO).id}]
 
 
+def ecu_pending(s: Session) -> Params:
+    # 入力者が申請した承認待ちの ECU（承認者の承認・差し戻しが 200 になる形）
+    return {"ecu_id": ecu_by_part_no(s, "DMY-A002").id}
+
+
+def reject_body(_s: Session) -> dict:
+    return {"reason": "権限のテスト"}
+
+
 def draft_body(s: Session) -> dict:
     first_item = s.scalars(select(MeasureItem.id).order_by(MeasureItem.sort_order)).first()
     return {"entries": [{"item_id": first_item, "status": "done", "evidence": "権限のテスト"}]}
@@ -149,6 +158,37 @@ ROUTES: tuple[Route, ...] = (
         missing=ecu_missing,
         probes=ecu_probes,
         body=draft_body,
+    ),
+    Route(
+        "POST",
+        "/api/ecus/{ecu_id}/submit",
+        SUPPLIER,
+        {"editor": 200, "approver": 403, "supplier_admin": 403} | dict.fromkeys(OEM_ROLES, 403),
+        own=ecu_own,
+        foreign=ecu_foreign,
+        missing=ecu_missing,
+        probes=ecu_probes,
+    ),
+    Route(
+        "POST",
+        "/api/ecus/{ecu_id}/approve",
+        SUPPLIER,
+        {"editor": 403, "approver": 200, "supplier_admin": 403} | dict.fromkeys(OEM_ROLES, 403),
+        own=ecu_pending,
+        foreign=ecu_foreign,
+        missing=ecu_missing,
+        probes=ecu_probes,
+    ),
+    Route(
+        "POST",
+        "/api/ecus/{ecu_id}/reject",
+        SUPPLIER,
+        {"editor": 403, "approver": 200, "supplier_admin": 403} | dict.fromkeys(OEM_ROLES, 403),
+        own=ecu_pending,
+        foreign=ecu_foreign,
+        missing=ecu_missing,
+        probes=ecu_probes,
+        body=reject_body,
     ),
     Route(
         "GET",

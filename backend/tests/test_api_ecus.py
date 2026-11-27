@@ -56,7 +56,20 @@ def snapshot(s: Session) -> tuple:
     """DB が変わらなかったことを確かめるための、版・入力・監査ログの写し。"""
     s.expire_all()
     vs = [
-        (a.id, a.ecu_id, a.version, a.status, a.reject_reason)
+        (
+            a.id,
+            a.ecu_id,
+            a.version,
+            a.status,
+            a.reject_reason,
+            a.submitted_by,
+            a.submitted_at,
+            a.approved_by,
+            a.approved_at,
+            a.review_status,
+            a.reviewed_by,
+            a.reviewed_at,
+        )
         for a in s.scalars(select(Assessment).order_by(Assessment.id))
     ]
     es = [

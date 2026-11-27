@@ -47,6 +47,16 @@ class Api:
     def put(self, path: str, body: object, email: str | None = None, headers: dict | None = None):
         return self.client.put(path, json=body, headers=headers or self.headers(email))
 
+    def post(
+        self,
+        path: str,
+        body: object = None,
+        email: str | None = None,
+        headers: dict | None = None,
+    ):
+        """body が None なら本文なしで送る（申請・承認は本文なしで呼ぶ）"""
+        return self.client.post(path, json=body, headers=headers or self.headers(email))
+
 
 @pytest.fixture
 def db_session(conn: Connection) -> Iterator[Session]:

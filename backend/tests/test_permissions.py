@@ -249,6 +249,27 @@ def test_extra_fields_in_draft_body_are_422_and_change_nothing(api: Api) -> None
     assert snapshot(api.session) == before
 
 
+@pytest.mark.parametrize(
+    "route",
+    [r for r in ROUTES if r.writes and not r.path.endswith("/draft")],
+    ids=lambda r: f"{r.method} {r.path}",
+)
+def test_extra_fields_in_other_write_bodies_are_422(api: Api, route) -> None:
+    """下書きの保存以外の書き込み（申請・承認・差し戻し）でも、他社の番号などの余計な欄は 422"""
+    b = company_named_like(api.session, SUPPLIER, "b")
+    b_ecu = api.session.scalars(select(Ecu).where(Ecu.supplier_id == b.id)).first()
+    assert b_ecu is not None
+    role = next(r for r, code in route.allowed.items() if code == 200)
+    email = next(e for e in A_USERS if e.startswith(f"a-{role}@"))
+    base = route.body(api.session) if route.body else {}
+    url = route.url(route.own(api.session))
+    before = snapshot(api.session)
+    for extra in ({"ecu_id": b_ecu.id}, {"supplier_id": b.id}, {"company_id": b.id}):
+        res = api.client.request(route.method, url, json=base | extra, headers=api.headers(email))
+        assert res.status_code == 422, (extra, res.text)
+    assert snapshot(api.session) == before
+
+
 def test_extra_claims_in_token_are_ignored(api: Api) -> None:
     editor = api.user(A_USERS[0])
     b = company_named_like(api.session, SUPPLIER, "b")
