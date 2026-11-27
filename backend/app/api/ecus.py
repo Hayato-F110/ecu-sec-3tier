@@ -106,7 +106,10 @@ def view_of(db: Session, assessment: Assessment | None, user: User | None = None
             status=assessment.status,
             reject_reason=assessment.reject_reason if assessment.status == "rejected" else None,
         ),
-        can_review=can_review(assessment, user),
+        # 全項目が入力済みでないと承認は 409 になるので、ボタンも出さない（差し戻しで直してもらう）
+        can_review=assessment is not None
+        and can_review(assessment, user)
+        and is_complete(db, assessment),
         entries=[
             EntryOut(
                 item_id=m.id,
@@ -278,8 +281,8 @@ def new_version(db: Session, ecu_id: int) -> Assessment:
 
 # ---- 承認フロー（docs/test-plans/SC3-14.md） ----
 # 調べる順番：401 → 会社の種類と役割（403）→ 自社の ECU か（404）→ 操作の役割（403）
-# → 本文の形（422）→ 状態（409）→ 申請なら全項目が入力済みか（409）
-# → 承認・差し戻しなら職務分離（403）
+# → 本文の形（422）→ 状態（409）→ 承認・差し戻しなら職務分離（403）
+# → 申請・承認なら全項目が入力済みか（409）
 
 Editor = Annotated[tuple[Ecu, User], Depends(editor_of_own_ecu)]
 Approver = Annotated[tuple[Ecu, User], Depends(approver_of_own_ecu)]
@@ -364,11 +367,11 @@ def approve(
     """承認。メーカーの確認状況は「未確認」から始める"""
     ecu, user = target
     current = locked_open_version(db, ecu, "pending", "承認待ちの版がありません")
+    not_own_submission(current, user)
     # 承認待ちのあいだに対策項目が増えることがあるので、承認でも確かめ直す
-    # （空のセルのまま承認しない）
+    # （空のセルのまま承認しない）。職務分離（403）のあと
     if not is_complete(db, current):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="未入力の項目があります")
-    not_own_submission(current, user)
     current.status = "approved"
     current.approved_by = user.id
     current.approved_at = datetime.now(UTC)

@@ -25,8 +25,10 @@ def storable_text(value: str) -> str:
 
 StorableText = Annotated[str, Field(max_length=EVIDENCE_MAX), AfterValidator(storable_text)]
 
-# 空白（半角・全角・改行など）と見えない文字以外が1つ以上あるか。DB の制約（models.NOT_BLANK）と
-# 同じ文字の集まりを使い、API で先に断る（DB の制約に当たって 500 にしない）
+# 空白（半角・全角・改行など）と見えない文字以外が1つ以上あるか。DB の制約（models.NOT_BLANK）の
+# 見えない文字の集まりを使い、API で先に断る（DB の制約に当たって 500 にしない）。Python の \s は
+# PostgreSQL の [:space:] より少し広い（U+001C〜U+001F・U+0085 も空白と数える）ので、
+# API のほうが厳しい
 VISIBLE = re.compile(f"[^\\s{INVISIBLE_SPACES}]")
 
 
