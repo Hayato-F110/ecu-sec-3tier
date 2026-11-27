@@ -337,7 +337,8 @@ def test_workflow_audit_log(api: Api, part_no: str, action: str, email: str) -> 
     # 対象はどの場合も、その ECU のいちばん新しい版
     assert log.target == f"assessment:{versions(api.session, ecu)[-1].id}"
     assert str(log.ip) == "203.0.113.5"
-    assert REASON not in (log.target or "")
+    # 理由の本文は監査ログに入れない：この操作で残った行の、どの欄にも入っていない
+    assert all(REASON not in str(getattr(log, c.key)) for c in AuditLog.__table__.columns)
 
 
 # ---- #11 役割・本文の形（権限の表の行は実装と同じ PR で足す） ----
@@ -432,6 +433,16 @@ def test_submit_with_incomplete_entries_is_409(api: Api, how: str) -> None:
     make_incomplete(api, ecu, how)
     before = snapshot(api.session)
     res = submit(api, ecu)
+    assert (res.status_code, res.json()["detail"]) == (409, INCOMPLETE)
+    assert snapshot(api.session) == before
+
+
+def test_approve_after_items_increased_is_409(api: Api) -> None:
+    """承認待ちのあいだに対策項目が増えたら、承認もしない（空のセルのまま承認しない）"""
+    ecu = api.ecu(PENDING)
+    make_incomplete(api, ecu, "対策項目が増えた")
+    before = snapshot(api.session)
+    res = approve(api, ecu)
     assert (res.status_code, res.json()["detail"]) == (409, INCOMPLETE)
     assert snapshot(api.session) == before
 
