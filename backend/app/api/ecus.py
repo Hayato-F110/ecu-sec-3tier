@@ -304,7 +304,8 @@ def is_complete(db: Session, assessment: Assessment) -> bool:
     }
     for item_id in db.scalars(select(MeasureItem.id)):
         e = entries.get(item_id)
-        if e is None or e.status is None or not has_visible(e.evidence):
+        # 行がない＝状態が未選択（行の状態・根拠は DB の NOT NULL で空にならない）
+        if e is None or not has_visible(e.evidence):
             return False
         if e.status in ("in_progress", "not_done") and e.planned_date is None:
             return False
@@ -363,6 +364,10 @@ def approve(
     """承認。メーカーの確認状況は「未確認」から始める"""
     ecu, user = target
     current = locked_open_version(db, ecu, "pending", "承認待ちの版がありません")
+    # 承認待ちのあいだに対策項目が増えることがあるので、承認でも確かめ直す
+    # （空のセルのまま承認しない）
+    if not is_complete(db, current):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="未入力の項目があります")
     not_own_submission(current, user)
     current.status = "approved"
     current.approved_by = user.id
