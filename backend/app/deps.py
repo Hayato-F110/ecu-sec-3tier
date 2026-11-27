@@ -1,7 +1,8 @@
 """API の共通の部品：DB の接続、本人確認、会社ごとの絞り込み。
 
-調べる順番（docs/test-plans/SC3-9.md）：ログイン（401）→ メーカーか（403）→ 自社の ECU か（404）
-→ 役割（403）。FastAPI は依存（Depends）を、本文の形の検査（422）より先に解くので、
+調べる順番（docs/test-plans/SC3-9.md・SC3-13.md）：ログイン（401）→ 会社の種類と役割が合うか（403）
+→ 自社の ECU か（404）→ 操作の役割（403）。
+FastAPI は依存（Depends）を、本文の形の検査（422）より先に解くので、
 本文の形が誤っていても、他社の ECU には 404 が先に返る。
 ただし JSON として読めない本文は、依存より前に 422 になる
 （どの ECU でも同じ応答なので、存在は漏れない）。
@@ -65,9 +66,15 @@ def current_user(
     return user
 
 
-def supplier_user(user: Annotated[User, Depends(current_user)]) -> User:
-    """サプライヤ用の API。メーカーの利用者は ECU を探す前に 403（ECU の有無を明かさない）。"""
-    if user.role not in SUPPLIER_ROLES:
+def supplier_user(user: Annotated[User, Depends(current_user)], db: Db) -> User:
+    """サプライヤ用の API。サプライヤの会社の、サプライヤの役割の利用者だけ。
+
+    役割に加えて会社の種類も確かめる（SC3-34。役割と会社の種類が合うことは DB の制約で守っていない。
+    メーカーの会社に「入力者」ができても、サプライヤ用の API を通さない）。
+    それ以外の利用者は ECU を探す前に 403（ECU の有無を明かさない）。
+    """
+    company = db.get(Company, user.company_id)
+    if user.role not in SUPPLIER_ROLES or company is None or company.type != "supplier":
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="この操作はできません")
     return user
 
