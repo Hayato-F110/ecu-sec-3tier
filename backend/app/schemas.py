@@ -1,9 +1,12 @@
 """API の入力と出力の形（Pydantic）。形の誤りは 422 になる。"""
 
+import re
 from datetime import date
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+
+from app.models import INVISIBLE_SPACES
 
 EntryStatus = Literal["done", "in_progress", "not_done", "not_applicable"]
 EVIDENCE_MAX = 2000
@@ -21,6 +24,23 @@ def storable_text(value: str) -> str:
 
 
 StorableText = Annotated[str, Field(max_length=EVIDENCE_MAX), AfterValidator(storable_text)]
+
+# 空白（半角・全角・改行など）と見えない文字以外が1つ以上あるか。DB の制約（models.NOT_BLANK）と
+# 同じ文字の集まりを使い、API で先に断る（DB の制約に当たって 500 にしない）
+VISIBLE = re.compile(f"[^\\s{INVISIBLE_SPACES}]")
+
+
+def has_visible(value: str | None) -> bool:
+    return value is not None and VISIBLE.search(value) is not None
+
+
+def not_blank(value: str) -> str:
+    if not has_visible(value):
+        raise ValueError("空白だけにはできません")
+    return value
+
+
+ReasonText = Annotated[StorableText, AfterValidator(not_blank)]
 
 
 class EcuSummary(BaseModel):
@@ -61,10 +81,26 @@ class DraftIn(BaseModel):
         return self
 
 
+class NoFieldsIn(BaseModel):
+    """申請・承認の本文。なくても {} でもよいが、余計な欄（submitted_by など）は 422。
+    記録する人は、本文ではなくログインした本人に決める"""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RejectIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: ReasonText
+
+
 class AssessmentOut(BaseModel):
     id: int
     version: int
     status: str
+    # 状態が差し戻しのときだけ入る。差し戻しのあと保存しても DB には前の理由が残るので、
+    # 古い理由を今の差し戻しと読み違えないように、API が返すかを決める
+    reject_reason: str | None = None
 
 
 class EntryOut(BaseModel):
@@ -81,6 +117,9 @@ class EntryOut(BaseModel):
 class AssessmentView(BaseModel):
     assessment: AssessmentOut | None
     entries: list[EntryOut]
+    # ログインした人がこの版を承認・差し戻しできるか（承認者で、申請者本人でなく、承認待ち）。
+    # 画面はこの欄でボタンを出し分ける（決まりを API の1か所に置く）
+    can_review: bool = False
 
 
 # ---- 一括確認マトリクス（メーカー用）。返す欄はここで決めたものだけ ----

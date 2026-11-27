@@ -64,7 +64,8 @@ def call(api: Api, method: str, path: str, ecu_id: int, headers: dict[str, str])
     url = path.format(ecu=ecu_id)
     if method == "GET":
         return api.client.get(url, headers=headers)
-    return api.client.put(url, json=BODY, headers=headers)
+    # 表のメソッドのまま呼ぶ（POST の API を PUT で呼ぶと 405 になり、認証を確かめたことにならない）
+    return api.client.request(method, url, json=BODY, headers=headers)
 
 
 def ecu_ids(api: Api) -> dict[str, int]:

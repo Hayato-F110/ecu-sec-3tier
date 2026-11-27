@@ -119,3 +119,11 @@ def editor_of_own_ecu(ecu: OwnEcu, user: SupplierUser) -> tuple[Ecu, User]:
     if user.role != "editor":
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="この操作はできません")
     return ecu, user
+
+
+def approver_of_own_ecu(ecu: OwnEcu, user: SupplierUser) -> tuple[Ecu, User]:
+    """承認・差し戻しができるのは承認者だけ。自社の ECU かを先に調べる（404 → 403 の順）。
+    申請者本人かどうか（職務分離）は、状態を確かめたあとに API の中で調べる"""
+    if user.role != "approver":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="この操作はできません")
+    return ecu, user
