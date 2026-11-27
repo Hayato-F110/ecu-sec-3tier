@@ -109,8 +109,12 @@ const OFFICIAL = {
   github: /https:\/\/docs\.github\.com(?![\w.-])/,
   atlassian: /https:\/\/(support|confluence|developer)\.atlassian\.com(?![\w.-])/,
 };
+// 手順の前置きの形：見出し（# ・**太字**）、「：」「:」で終わる行、「次の操作」「手順」を含む行
+const LEAD_IN = /^\s*(#|\*\*.*\*\*\s*$)|[：:]\s*$|次の操作|手順/;
 const providersOf = (text) => {
   const found = new Set();
+  // 「リージョン」は AWS の画面だけの言葉（サービスの名前の一覧にはないが、AWS の手がかりにする。SC3-39）
+  if (/リージョン/.test(text)) found.add("aws");
   for (const m of text.matchAll(new RegExp(SERVICE.source, "g"))) {
     if (m[0] === "GitHub") found.add("github");
     else if (/Jira|Atlassian|Confluence/.test(m[0])) found.add("atlassian");
@@ -196,17 +200,22 @@ const countSteps = (text) => {
     let j = i;
     while (j < lines.length && LIST_ITEM.test(lines[j])) j += 1;
     const { lines: block, labeled } = withoutRowLabels(lines.slice(i, j));
-    // 手順の前の段落：空行を飛ばして、いちばん近い空でない行（「AWS のコンソールで：」＋空行＋手順の形。
-    // 見出しと番号つきの手順のあいだには空行を入れることが多い。SC3-39 の1回目のレビュー）
+    // 手順の前の行：直前の行。直前が空行なら、空行を飛ばした行が「前置きの形」（見出し・「：」で終わる・
+    // 「次の操作」「手順」を含む）のときだけ使う。見出しと手順のあいだには空行を入れることが多いが、
+    // 報告の行（「Jira を更新しました。」）まで手がかりにすると、要らない出典を求める（SC3-39 のレビュー）
+    const prev = i > 0 ? lines[i - 1] : "";
     let k = i - 1;
     while (k >= 0 && lines[k].trim() === "") k -= 1;
-    const intro = k >= 0 ? lines[k] : "";
+    const farther = k >= 0 ? lines[k] : "";
+    const intro = prev.trim() !== "" ? prev : LEAD_IN.test(farther) ? farther : "";
     const hasClue = (l) => SERVICE.test(l) || CHROME.test(l);
     const onScreen = block.some(hasClue);
     // 表（箇条書きのすぐあとに続く表も）の見出しの行か、表の直前の行（「GitHub のリポジトリで：」）に
     // サービスの名前があれば、表の全部の行が外部サービスの画面の行。「画面」などの部品の言葉は、
     // 自分の画面の確認の表（「画面で確かめること：」）にも使うので、ここでは手がかりにしない
     const firstTable = block.findIndex((l) => TABLE_ROW.test(l));
+    // 表の前も手順の前と同じ（空行を飛ばすのは前置きの形のときだけ。報告の行で確認の表まで手順と
+    // 数えないように。SC3-39 のレビュー）
     const beforeTable = firstTable > 0 ? block[firstTable - 1] : intro;
     const tableOnService =
       firstTable >= 0 && (SERVICE.test(block[firstTable]) || SERVICE.test(beforeTable));

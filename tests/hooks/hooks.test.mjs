@@ -325,7 +325,28 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
   test("手順の文に「コンソール」があれば、今までどおり AWS の出典を求める（SC3-39）", () => {
     const console_ =
       "Jira の課題も見てください。\n\n1. コンソールの左のメニューから「ユーザー」を開く\n2. 「作成」ボタンを押す\n";
-    assert.notEqual(findStepsWithoutSource(console_), null);
+    // 空行の前の報告の行（Jira）を手がかりにせず、AWS の出典だけを求める（2回目のレビュー）
+    const reason = findStepsWithoutSource(console_) ?? "";
+    assert.match(reason, /aws/);
+    assert.doesNotMatch(reason, /atlassian/);
+  });
+  // SC3-39 の2回目のレビュー：空行の前の報告の行・表の前の報告の行で、新しく誤って止めない
+  test("空行の前の報告の行（Jira を更新しました）は手順の手がかりにしない（SC3-39）", () => {
+    const ghWithSource =
+      "Jira の SC3-12 を進行中にしました。\n\n" +
+      "1. GitHub の「Settings」タブを開く\n2. 「Branches」を選ぶ\n" +
+      "出典：https://docs.github.com/ja/repositories\n";
+    assert.equal(findStepsWithoutSource(ghWithSource), null);
+    const checkTable =
+      "PR を Jira に記録しました。\n\n| 確かめること | 結果 |\n| --- | --- |\n" +
+      "| 1 | 承認ボタンを押す |\n| 2 | 一覧を開く |\n";
+    assert.equal(findStepsWithoutSource(checkTable), null);
+  });
+  test("手順の文の「リージョン」は AWS の手がかりにする（SC3-39）", () => {
+    const region =
+      "AWS の準備です。\n\n### 手順\n\n1. 右上のリージョンを東京に切り替える\n" +
+      "2. 左のメニューから「ユーザー」を開く\n3. 「作成」ボタンを押す\n";
+    assert.match(findStepsWithoutSource(region) ?? "", /aws/);
   });
   // SC3-39 の1回目のレビュー：手順の行にサービスの名前がなく、空行の前の段落にだけあるときも止める
   test("空行の前の段落にサービスの名前がある画面の手順は止める（SC3-39）", () => {
@@ -341,7 +362,7 @@ describe("guard-cite-sources（外部サービスの画面の手順には公式�
     assert.match(findStepsWithoutSource(gh) ?? "", /github/);
     assert.doesNotMatch(findStepsWithoutSource(gh) ?? "", /aws/);
     const ghTable =
-      "GitHub の設定です。\n\n| 手順 | 操作 |\n| --- | --- |\n" +
+      "GitHub のリポジトリの設定で：\n\n| 手順 | 操作 |\n| --- | --- |\n" +
       "| 1 | 「Settings」タブを開く |\n| 2 | 「Branches」を選ぶ |\n";
     assert.match(findStepsWithoutSource(ghTable) ?? "", /github/);
   });
