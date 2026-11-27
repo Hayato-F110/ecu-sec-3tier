@@ -470,7 +470,9 @@ def test_other_company_reject_with_empty_reason_is_404(api: Api) -> None:
     other = api.post(url(api.ecu(PENDING), "reject"), {"reason": ""}, B_APPROVER)
     missing = api.post(url(NO_SUCH_ECU, "reject"), {"reason": ""}, B_APPROVER)
     assert other.status_code == missing.status_code == 404
-    assert other.json() == missing.json()
+    # 自社の ECU かの確かめ（own_ecu）の 404。
+    # API がない「存在しない URL」の 404（Not Found）と見分ける
+    assert other.json() == missing.json() == {"detail": "見つかりません"}
 
 
 @pytest.mark.parametrize("email", [A_EDITOR, A_ADMIN])
