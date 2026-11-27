@@ -28,6 +28,26 @@ type Row = {
   planned_date: string;
 };
 
+/** 保存していない入力（SC3-38）。ログインの期限が切れたときに上の部品が預かり、同じ人が戻ったら返す */
+export type DraftRow = Pick<
+  Row,
+  "item_id" | "status" | "evidence" | "planned_date"
+>;
+
+/** サーバーの行に、預かった入力を重ねる。サーバーにない項目の入力は捨てる。
+ * 預かった状態が（未選択）で、サーバーに保存済みの状態があるときは、サーバーの状態を使う */
+const restoreInto = (rows: Row[], kept: DraftRow[]): Row[] =>
+  rows.map((r) => {
+    const k = kept.find((d) => d.item_id === r.item_id);
+    if (k === undefined) return r;
+    return {
+      ...r,
+      status: k.status === "" && r.saved ? r.status : k.status,
+      evidence: k.evidence,
+      planned_date: k.planned_date,
+    };
+  });
+
 const rowsOf = (view: AssessmentView): Row[] =>
   view.entries.map((e) => ({
     item_id: e.item_id,
@@ -75,12 +95,37 @@ const Notice = ({ view }: { view: AssessmentView }) => {
 export const AssessmentForm = ({
   token,
   ecuId,
+  restore,
+  onRestored,
+  onDraftChange,
 }: {
   token: string;
   ecuId: number;
+  /** 戻す入力（ログインし直す前の同じ人・同じ ECU の入力）。最初の読み込みのときだけ使う */
+  restore?: DraftRow[];
+  /** 戻し終えたら呼ぶ（上の部品は預かった入力を捨てる。戻すのは1回だけ） */
+  onRestored?: () => void;
+  /** 保存していない入力が変わるたびに呼ぶ。入力がない・保存したら null */
+  onDraftChange?: (rows: DraftRow[] | null) => void;
 }) => {
   const [view, setView] = useState<AssessmentView | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  // 保存していない入力がある（入力したか、預かった入力を戻した）
+  const [dirty, setDirty] = useState(false);
+  const [restored, setRestored] = useState(false);
+  // 最初の読み込みのときの値だけを使う（読み込みの途中で props が変わっても読み直さない）
+  const restoreAtMount = useRef(restore);
+  const onRestoredRef = useRef(onRestored);
+  const onDraftChangeRef = useRef(onDraftChange);
+  useEffect(() => {
+    onRestoredRef.current = onRestored;
+    onDraftChangeRef.current = onDraftChange;
+  }, [onRestored, onDraftChange]);
+  useEffect(() => {
+    onDraftChangeRef.current?.(dirty ? rows : null);
+  }, [dirty, rows]);
+  // 部品が消えたら（ほかのページへ移った・人が替わった）、預かる入力もなくす
+  useEffect(() => () => onDraftChangeRef.current?.(null), []);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   // 保存の結果は「どのユーザー・ECU の保存か」と組で持ち、今の組と同じときだけ出す
@@ -102,7 +147,16 @@ export const AssessmentForm = ({
       (result) => {
         if (!active) return;
         setView(result);
-        setRows(rowsOf(result));
+        const kept = restoreAtMount.current;
+        if (kept !== undefined && kept.length > 0) {
+          restoreAtMount.current = undefined;
+          setRows(restoreInto(rowsOf(result), kept));
+          setDirty(true);
+          setRestored(true);
+          onRestoredRef.current?.();
+        } else {
+          setRows(rowsOf(result));
+        }
         setLoadError(null);
       },
       (e: unknown) => {
@@ -121,6 +175,7 @@ export const AssessmentForm = ({
 
   const update = (itemId: number, change: Partial<Row>) => {
     setSavedFor(null);
+    setDirty(true);
     setRows((current) =>
       current.map((r) => (r.item_id === itemId ? { ...r, ...change } : r)),
     );
@@ -139,6 +194,8 @@ export const AssessmentForm = ({
       if (currentTarget.current !== sentFor) return;
       setView(result);
       setRows(rowsOf(result));
+      setDirty(false);
+      setRestored(false);
       setSavedFor(sentFor);
     } catch (e: unknown) {
       if (currentTarget.current !== sentFor) return;
@@ -154,6 +211,9 @@ export const AssessmentForm = ({
         <p>{versionLabel(view.assessment.version, view.assessment.status)}</p>
       )}
       <Notice view={view} />
+      {restored && (
+        <p>ログインし直す前の入力を戻しました（まだ保存していません）</p>
+      )}
       <table>
         <thead>
           <tr>

@@ -10,16 +10,38 @@ import {
 } from "react-router";
 
 import { homeOf, type Session, setUnauthorizedHandler } from "./api";
-import { AssessmentForm } from "./AssessmentForm";
+import { AssessmentForm, type DraftRow } from "./AssessmentForm";
 import { EcuList } from "./EcuList";
 import { Login } from "./Login";
 import { Matrix } from "./Matrix";
 
+/** 保存していない入力と、誰の・どの ECU の入力か（SC3-38） */
+type Draft = { email: string; ecuId: number; rows: DraftRow[] };
+
+const sameEmail = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
 /** URL の ECU の番号（/ecus/3）を読む。数字でなければ API を呼ばずに「見つかりません」。
  * export はテスト（App.test.tsx の部品のテスト）のためだけ。画面からはログインの確かめを通る App の中でだけ使う */
-export const AssessmentPage = ({ token }: { token: string }) => {
+export const AssessmentPage = ({
+  token,
+  email = "",
+  kept = null,
+  onRestored,
+  onDraftChange,
+}: {
+  token: string;
+  email?: string;
+  /** 預かっている入力。同じ人・同じ ECU のときだけ入力の部品に渡す */
+  kept?: Draft | null;
+  onRestored?: () => void;
+  onDraftChange?: (draft: Draft | null) => void;
+}) => {
   const { ecuId } = useParams();
   const id = /^\d{1,18}$/.test(ecuId ?? "") ? Number(ecuId) : NaN;
+  const restore =
+    kept !== null && kept.ecuId === id && sameEmail(kept.email, email)
+      ? kept.rows
+      : undefined;
   return (
     <>
       <p>
@@ -27,7 +49,16 @@ export const AssessmentPage = ({ token }: { token: string }) => {
       </p>
       <h2>対策状況の入力</h2>
       {Number.isSafeInteger(id) && id >= 1 ? (
-        <AssessmentForm key={`${token}:${id}`} token={token} ecuId={id} />
+        <AssessmentForm
+          key={`${token}:${id}`}
+          token={token}
+          ecuId={id}
+          restore={restore}
+          onRestored={onRestored}
+          onDraftChange={(rows) =>
+            onDraftChange?.(rows === null ? null : { email, ecuId: id, rows })
+          }
+        />
       ) : (
         <p role="alert">見つかりません</p>
       )}
@@ -46,6 +77,11 @@ export const App = () => {
     email: string;
     path: string;
   } | null>(null);
+  // SC3-38：入力の画面の、保存していない入力（入力の部品が知らせる）。
+  // 401 のときにだけ kept へ写し、同じ人がログインし直したら入力の部品に返す。
+  // どちらもメモリーだけに置く（トークンと同じ理由で、ブラウザの保存場所には書かない）
+  const liveDraft = useRef<Draft | null>(null);
+  const [kept, setKept] = useState<Draft | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const here = useRef(location.pathname);
@@ -67,6 +103,10 @@ export const App = () => {
           ? null
           : { email: now.email, path: here.current },
       );
+      const draft = liveDraft.current;
+      setKept(
+        draft !== null && sameEmail(draft.email, now.email) ? draft : null,
+      );
       current.current = null;
       setSession(null);
       setNotice("ログインしてください");
@@ -79,6 +119,8 @@ export const App = () => {
   // <Navigate> が移る先（元のページか、役割ごとの最初のページ）へ移す
   const onLogin = (next: Session) => {
     current.current = next;
+    // 別の人がログインしたら、前の人の入力を捨てる（あとで前の人が戻っても返さない）
+    setKept((k) => (k !== null && sameEmail(k.email, next.email) ? k : null));
     setSession(next);
     setNotice(null);
   };
@@ -88,6 +130,7 @@ export const App = () => {
     setSession(null);
     setNotice(null);
     setReturnTo(null);
+    setKept(null);
     navigate("/login", { replace: true });
   };
 
@@ -144,7 +187,17 @@ export const App = () => {
           />
           <Route
             path="/ecus/:ecuId"
-            element={<AssessmentPage token={token} />}
+            element={
+              <AssessmentPage
+                token={token}
+                email={email}
+                kept={kept}
+                onRestored={() => setKept(null)}
+                onDraftChange={(draft) => {
+                  liveDraft.current = draft;
+                }}
+              />
+            }
           />
           <Route
             path="/matrix"

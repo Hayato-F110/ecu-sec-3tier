@@ -386,6 +386,131 @@ describe("入力画面でログインした人が変わったとき（SC3-12.md 
   });
 });
 
+describe("入力中にログインの期限が切れたとき（SC3-38）", () => {
+  const ECU = {
+    id: 1,
+    name: "ゲートウェイ ECU",
+    part_no: "DMY-A001",
+    vehicle_model: "架空セダン",
+    latest_version: 1,
+    latest_status: "draft",
+  };
+  const VIEW = {
+    assessment: { id: 7, version: 1, status: "draft" },
+    entries: [
+      {
+        item_id: 1,
+        code: "SB",
+        title: "セキュアブート",
+        status: "done",
+        evidence: "ROM の公開鍵で署名を検証",
+        planned_date: null,
+      },
+    ],
+  };
+  /** 1回目の保存だけ 401（期限切れ）。2回目からは保存した中身を返す */
+  const expiringApi = () => {
+    let drafts = 0;
+    return stubApi((url, init) => {
+      if (url === "/api/ecus") return json([ECU]);
+      if (url === "/api/ecus/1/assessment") return json(VIEW);
+      if (url === "/api/ecus/1/draft") {
+        drafts += 1;
+        if (drafts === 1) return json({ detail: "ログインが必要です" }, 401);
+        const { entries } = JSON.parse(String(init?.body)) as {
+          entries: { evidence: string }[];
+        };
+        return json({
+          ...VIEW,
+          entries: [{ ...VIEW.entries[0], evidence: entries[0].evidence }],
+        });
+      }
+      return json([]);
+    });
+  };
+  const draftBodies = (fetchMock: ReturnType<typeof stubApi>) =>
+    fetchMock.mock.calls
+      .filter(([u]) => u === "/api/ecus/1/draft")
+      .map((c) => ({ auth: authOf(c), body: String(c[1]?.body) }));
+
+  /** 入力者 A がログイン → 入力 → 保存で 401 → ログイン画面 */
+  const typeThenExpire = async () => {
+    renderAt("/login");
+    await logIn("a-editor@example.com");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    fireEvent.change(await screen.findByLabelText("セキュアブート の根拠"), {
+      target: { value: "保存前の根拠" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "下書きを保存" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "ログインしてください",
+    );
+  };
+
+  it("同じ人でログインし直すと入力が残り、保存の要求に残った入力が入る", async () => {
+    const fetchMock = expiringApi();
+    await typeThenExpire();
+    await logIn("a-editor@example.com");
+    // 元の入力画面に戻り、サーバーの値ではなく、保存する前の入力が出る
+    expect(await screen.findByDisplayValue("保存前の根拠")).toBeTruthy();
+    expect(screen.queryByDisplayValue("ROM の公開鍵で署名を検証")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "下書きを保存" }));
+    expect(await screen.findByText("保存しました")).toBeTruthy();
+    const last = draftBodies(fetchMock).at(-1)!;
+    expect(last.auth).toBe("Bearer tok-2");
+    expect(last.body).toContain("保存前の根拠");
+  });
+
+  it("別の人でログインすると、前の人の入力は画面にも保存の要求にも出ない（その後に前の人が戻っても）", async () => {
+    const fetchMock = expiringApi();
+    await typeThenExpire();
+    // 別の人（B 社）がログイン → ログアウト → 元の人（A 社）がログインして同じ ECU を開く
+    await logIn("b-editor@example.com");
+    await screen.findByRole("heading", { name: "自社 ECU 一覧" });
+    expect(screen.queryByDisplayValue("保存前の根拠")).toBeNull();
+    // 同じ ECU の画面を開いても出さない（本物の API なら B 社には 404。ここでは画面の守りだけを
+    // 確かめるため、見本はわざと中身を返す）
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    expect(
+      await screen.findByDisplayValue("ROM の公開鍵で署名を検証"),
+    ).toBeTruthy();
+    expect(screen.queryByDisplayValue("保存前の根拠")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "ログアウト" }));
+    await logIn("a-editor@example.com");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    // 別の人がログインした時点で捨てたので、サーバーの値が出る
+    expect(
+      await screen.findByDisplayValue("ROM の公開鍵で署名を検証"),
+    ).toBeTruthy();
+    expect(screen.queryByDisplayValue("保存前の根拠")).toBeNull();
+    // 401 になった1回目のほかに、保存前の根拠を送った要求がない
+    const sent = draftBodies(fetchMock).filter((d) =>
+      d.body.includes("保存前の根拠"),
+    );
+    expect(sent.map((d) => d.auth)).toEqual(["Bearer tok-1"]);
+  });
+
+  it("残した入力は1回だけ戻す。ほかのページへ移って戻ると、サーバーの値を出す", async () => {
+    expiringApi();
+    await typeThenExpire();
+    await logIn("a-editor@example.com");
+    expect(await screen.findByDisplayValue("保存前の根拠")).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "← 自社 ECU 一覧へ" }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    expect(
+      await screen.findByDisplayValue("ROM の公開鍵で署名を検証"),
+    ).toBeTruthy();
+  });
+});
+
 describe("入力のページの部品（SC3-12.md #18・SC3-35）", () => {
   it("トークンが替わったら部品を作り直し、新しい応答が来るまで前の人の入力を出さない", async () => {
     const VIEW = {
