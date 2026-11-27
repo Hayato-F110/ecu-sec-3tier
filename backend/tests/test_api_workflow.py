@@ -405,8 +405,6 @@ def make_incomplete(api: Api, ecu: Ecu, how: str) -> None:
         api.session.delete(rows[0])
     elif how == "根拠が空白だけ":
         rows[0].evidence = " 　"
-    elif how == "根拠がない":
-        rows[0].evidence = None
     elif how == "対応中で予定日なし":
         rows[0].status, rows[0].planned_date = "in_progress", None
     elif how == "未対応で予定日なし":
@@ -423,7 +421,7 @@ def make_incomplete(api: Api, ecu: Ecu, how: str) -> None:
     [
         "行がない",
         "根拠が空白だけ",
-        "根拠がない",
+        # 根拠が空（NULL）の行は、DB の NOT NULL で作れないので確かめない（行がない場合で確かめる）
         "対応中で予定日なし",
         "未対応で予定日なし",
         "対策項目が増えた",
