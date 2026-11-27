@@ -19,6 +19,10 @@ import {
   findSprintMove,
   JIRA_KEY,
 } from "../../.claude/hooks/guard-jira-fields.mjs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import {
   findCheckPipe,
   findLongForeground,
@@ -116,6 +120,53 @@ describe("guard-long-foreground", () => {
   });
   // SC3-32：/code-review は終わるまでほかの操作を止めるので、目安と待つ間の課題を先に伝える
   const NOTICE = "目安は5分ほどです。待つ間に進める課題：SC3-39 の PR の説明";
+  test("見るのはいちばん新しい文だけ。前の文の目安・待つ間の課題では通さない（SC3-32 のレビュー）", () => {
+    // 判定の関数には、この回の文を古い順の配列で渡す
+    const old = "pytest は目安3分です。待つ間に進める課題：SC3-40";
+    assert.notEqual(findReviewWithoutNotice("code-review", [old, "レビューを呼びます。"]), null);
+    assert.equal(findReviewWithoutNotice("code-review", ["待つ間に進める課題：なし", NOTICE]), null);
+  });
+  test("目安には数字か「分」が要る。「なし」のかっこの前の空白は許す（SC3-32 のレビュー）", () => {
+    assert.notEqual(
+      findReviewWithoutNotice("code-review", "目安を伝えます。待つ間に進める課題：SC3-40"),
+      null,
+    );
+    assert.equal(
+      findReviewWithoutNotice("code-review", "目安は数分。待つ間に進める課題：なし （止まるため）"),
+      null,
+    );
+  });
+  test("先頭の「/」や大文字の名前も code-review と見なす（SC3-32 のレビュー）", () => {
+    assert.notEqual(findReviewWithoutNotice("/code-review", ""), null);
+    assert.notEqual(findReviewWithoutNotice("Code-Review", ""), null);
+  });
+  // Hook を実際に動かす：入力（Skill の tool_input.skill）と会話の記録の読み方まで確かめる
+  const runHook = (input) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL("../../.claude/hooks/guard-long-foreground.mjs", import.meta.url))], {
+      input: JSON.stringify(input),
+      encoding: "utf8",
+    });
+  const transcriptWith = (text) => {
+    const dir = fileURLToPath(new URL("../../tmp/hook-tests/", import.meta.url));
+    mkdirSync(dir, { recursive: true });
+    const path = `${dir}transcript-${process.pid}-${Math.random().toString(36).slice(2)}.jsonl`;
+    const entry = { type: "assistant", message: { content: [{ type: "text", text }] } };
+    writeFileSync(path, `${JSON.stringify(entry)}\n`);
+    return path;
+  };
+  test("Hook を動かすと、目安なしの /code-review は終了コード 2、ありは 0（SC3-32 のレビュー）", () => {
+    const skill = { tool_name: "Skill", tool_input: { skill: "code-review", args: "medium" } };
+    const blocked = runHook({ ...skill, transcript_path: transcriptWith("レビューを呼びます。") });
+    assert.equal(blocked.status, 2);
+    assert.match(blocked.stderr, /目安/);
+    assert.equal(runHook({ ...skill, transcript_path: transcriptWith(NOTICE) }).status, 0);
+    // 会話の記録を読めないときは通す（進め方の決まりで、秘密を守るものではないため）
+    assert.equal(runHook({ ...skill, transcript_path: "no/such/file.jsonl" }).status, 0);
+    assert.equal(runHook(skill).status, 0);
+    // code-review 以外の Skill は見ない
+    const other = { tool_name: "Skill", tool_input: { skill: "story" } };
+    assert.equal(runHook({ ...other, transcript_path: transcriptWith("") }).status, 0);
+  });
   test("/code-review を、目安と待つ間の課題を書かずに呼ぶと止める（SC3-32）", () => {
     assert.notEqual(findReviewWithoutNotice("code-review", ""), null);
     assert.notEqual(findReviewWithoutNotice("code-review", "レビューを呼びます。"), null);

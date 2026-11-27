@@ -96,17 +96,27 @@ export const findLongForeground = (command, background) => {
 // SC3-32：/code-review（Skill）も、終わるまで数分ほかの操作を止める。呼ぶ前に、目安の時間と
 // 「待つ間に進める課題：」の行を書いたかを、この回に書いた文で確かめる（2026-11-25 に書かずに呼んだ）
 const NEXT = /待つ間に進める課題[：:]\s*(.+)/;
-const isReview = (skill) => skill === "code-review" || skill.endsWith(":code-review");
+// 目安の時間：「目安」のあと（同じ文の中）に数字か「分」（「目安は5分」「目安は数分」）
+const ESTIMATE = /目安[^。\n]*?(\d|[０-９]|分)/;
+const isReview = (skill) => {
+  const name = skill.replace(/^\//, "").toLowerCase();
+  return name === "code-review" || name.endsWith(":code-review");
+};
 
-/** 止める理由（文字列）か、止めないなら null。skill は Skill の入力の skill の欄、text はこの回に書いた文 */
-export const findReviewWithoutNotice = (skill, text) => {
+/**
+ * 止める理由（文字列）か、止めないなら null。skill は Skill の入力の skill の欄。
+ * texts はこの回に書いた文（古い順の配列。文字列1つでもよい）。見るのはいちばん新しい文だけ
+ * （前の pytest のために書いた目安・待つ間の課題で通さない。SC3-32 のレビュー）
+ */
+export const findReviewWithoutNotice = (skill, texts) => {
   if (!isReview(String(skill ?? ""))) return null;
-  const plain = String(text ?? "");
-  if (!/目安/.test(plain)) return "/code-review を、目安の時間を書かずに呼ぼうとした";
+  const list = Array.isArray(texts) ? texts : [texts];
+  const plain = String(list.at(-1) ?? "");
+  if (!ESTIMATE.test(plain)) return "/code-review を、目安の時間（数字か「分」）を書かずに呼ぼうとした";
   const m = plain.match(NEXT);
   if (m === null) return "/code-review を、「待つ間に進める課題：」の行を書かずに呼ぼうとした";
   const next = m[1].trim();
-  if (/^なし\s*$/.test(next) || /^なし[^（(]/.test(next))
+  if (next.startsWith("なし") && !/^なし\s*[（(]/.test(next))
     return "「待つ間に進める課題：なし」に理由（かっこ）がない";
   return null;
 };
@@ -120,15 +130,15 @@ const readStdin = async () => {
 const main = async () => {
   const input = JSON.parse((await readStdin()) || "{}");
   if (input.tool_name === "Skill") {
-    let texts = [];
-    if (typeof input.transcript_path === "string") {
-      try {
-        texts = textsOfThisTurn(readFileSync(input.transcript_path, "utf8"));
-      } catch {
-        texts = [];
-      }
+    // 会話の記録を読めないときは通す（この Hook は進め方の決まりで、秘密を守るものではないため）
+    if (typeof input.transcript_path !== "string") return;
+    let texts;
+    try {
+      texts = textsOfThisTurn(readFileSync(input.transcript_path, "utf8"));
+    } catch {
+      return;
     }
-    const reason = findReviewWithoutNotice(input.tool_input?.skill, texts.join("\n"));
+    const reason = findReviewWithoutNotice(input.tool_input?.skill, texts);
     if (reason === null) return;
     process.stderr.write(
       `止めました：${reason}（CLAUDE.md「応答を遅くしない」）。/code-review は終わるまで数分、ほかの操作とオーナーへの返事を止めます。` +

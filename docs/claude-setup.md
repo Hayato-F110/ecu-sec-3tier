@@ -11,7 +11,7 @@ nori-adventure（2026-11）の設定を、このプロジェクト向けに引�
 | guard-delete | 道具の前（コマンド） | 消す操作・履歴の書き換えに、オーナーの確認を出す | そのまま |
 | guard-no-verify | 道具の前（コマンド） | `git commit --no-verify` などの確認を飛ばす指定を止める | そのまま |
 | guard-inline-backslash | 道具の前（コマンド） | `python -c`・`node -e` の中の Windows のパス・正規表現のバックスラッシュを止める | そのまま |
-| guard-long-foreground | 道具の前（コマンド） | 長い処理（**pytest・docker compose build/up・terraform plan/apply/destroy**・E2E・CI の見張り）を表で流すのと、検査をパイプにつなぐのを止める | 対象をこのプロジェクト向けに変更 |
+| guard-long-foreground | 道具の前（コマンド・Skill） | 長い処理（**pytest・docker compose build/up・terraform plan/apply/destroy**・E2E・CI の見張り）を表で流すのと、検査をパイプにつなぐのを止める。`/code-review`（Skill）は、この回のいちばん新しい文に「目安」（数字か「分」つき）と「待つ間に進める課題：」の行（「なし」なら理由のかっこ）がなければ止める。会話の記録を読めないときは通す | 対象をこのプロジェクト向けに変更。2026-11-27（SC3-32）：`/code-review` を、かかる時間と待つ間の課題を伝えずに呼び、数分オーナーに答えられなかったため（2026-11-25）、Skill も対象にした |
 | review-before-pr | 道具の前（`gh pr create`） | コードを変える PR で、最後のコミットのあとに `/code-review` を呼んでいなければ止める。ただし、その場所でレビューを1回以上していて、PR の説明に「直しの証拠の表」があれば通す | 対象の場所を `backend/`・`frontend/`・`infra/` などに変更。**直しの証拠の表で通す仕組みを追加**（nori の NORI-83 で作る予定だったもの。2026-11-22 にオーナーが承認） |
 | guard-jira-fields | 道具の前（Jira の作成・編集・遷移） | ポイント・期限・開始日の抜けと、スプリントへ入れる操作を止める | 課題キーと欄の ID を `project.json` から読むように変更。ポイントの欄は SC3 では `customfield_10016`（nori の `customfield_10034` は SC3 にない） |
 | guard-done-evidence | 道具の前（Jira の遷移） | 「完了」に移す前に、この会話でその課題に「完了条件」「証拠」の列がある表のコメントを書いたかを確かめる。なければ、または表に「未達」があれば止める | **新規**（harvest-before-done の代わり。2026-11-22 にオーナーが承認） |
