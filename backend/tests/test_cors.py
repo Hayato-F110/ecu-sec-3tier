@@ -33,9 +33,14 @@ def cors_headers(res) -> list[str]:
     return [k for k in res.headers if k.lower().startswith("access-control-")]
 
 
+def url_for(api: Api, path: str) -> str:
+    """登録されたパスの {ecu} を、自社の ECU の番号に置きかえる"""
+    return path.replace("{ecu}", str(api.ecu(OWN_ECU).id))
+
+
 def simple_request(client: TestClient, api: Api, method: str, path: str):
     """ほかのサイトの画面からの、ログインした人のトークン付きの呼び出し"""
-    url = path.replace("{ecu}", str(api.ecu(OWN_ECU).id))
+    url = url_for(api, path)
     headers = {**api.headers(EDITOR), "Origin": EVIL}
     # 入力の誤り（422）で処理の前に返らないよう、通る形の本文を送る
     if path == "/api/auth/login":
@@ -49,7 +54,7 @@ def simple_request(client: TestClient, api: Api, method: str, path: str):
 
 def preflight(client: TestClient, api: Api, method: str, path: str):
     """ブラウザが本番の呼び出しの前に送る問い合わせ（OPTIONS）"""
-    url = path.replace("{ecu}", str(api.ecu(OWN_ECU).id))
+    url = url_for(api, path)
     return client.options(
         url,
         headers={
@@ -74,6 +79,13 @@ def check_no_cors(client: TestClient, api: Api, app: FastAPI) -> None:
 
 def test_api_does_not_allow_other_sites(api: Api) -> None:
     check_no_cors(api.client, api, api.client.app)
+
+
+def test_url_with_unknown_path_parameter_fails(api: Api) -> None:
+    """{ecu} 以外の場所の値（例：{comment_id}）が残ると、存在しない URL として 404 になり、
+    処理まで届かないまま通ってしまう。置きかえ残しは落とす"""
+    with pytest.raises(AssertionError, match="comment_id"):
+        url_for(api, "/api/ecus/{ecu}/comments/{comment_id}")
 
 
 # ---- #3 上の確かめが、緩い設定を本当に見つけられること ----
