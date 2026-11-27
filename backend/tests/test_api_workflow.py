@@ -547,6 +547,21 @@ def test_cannot_review_own_submission_in_get(api: Api) -> None:
     assert api.get(assessment_url(ecu), A_APPROVER).json()["can_review"] is True
 
 
+def test_old_reject_reason_not_shown_after_approval(api: Api) -> None:
+    """承認済みの版に残る前の差し戻しの理由は、取得にもマトリクスにも出さない（決めたこと4）"""
+    secret = "テスト用の差し戻しの理由（外に出さない）"
+    ecu = api.ecu(PENDING)
+    assert reject(api, ecu, secret).status_code == 200
+    assert api.put(draft_url(ecu), full_body(api.session, "done"), A_EDITOR).status_code == 200
+    assert submit(api, ecu).status_code == 200
+    assert approve(api, ecu).status_code == 200
+    for email in (A_EDITOR, A_APPROVER):
+        res = api.get(assessment_url(ecu), email).json()
+        assert res["assessment"]["status"] == "approved"
+        assert res["assessment"]["reject_reason"] is None
+    assert secret not in api.get("/api/matrix", OEM_REVIEWER).text
+
+
 def test_matrix_does_not_show_reject_reason(api: Api) -> None:
     res = api.get("/api/matrix", OEM_REVIEWER)
     assert "reject_reason" not in res.text
