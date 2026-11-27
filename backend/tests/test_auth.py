@@ -15,15 +15,11 @@ from pydantic import SecretStr, ValidationError
 
 from tests.api_helpers import Api
 from tests.conftest import TEST_JWT_SECRET_KEY
+from tests.permissions_table import PUBLIC, ROUTES
 
-# 完了条件の対象：ログイン以外の全 API（#8 で、登録されたルートと突き合わせる）
-ENDPOINTS = [
-    ("GET", "/api/ecus"),
-    ("GET", "/api/ecus/{ecu}/assessment"),
-    ("PUT", "/api/ecus/{ecu}/draft"),
-    ("GET", "/api/matrix"),
-]
-PUBLIC = {("POST", "/api/auth/login")}
+# 完了条件の対象：ログイン以外の全 API（#8 で、登録されたルートと突き合わせる）。
+# 一覧は権限の表（tests/permissions_table.py。SC3-13）だけに置き、ここではそこから作る
+ENDPOINTS = [(r.method, r.path.replace("{ecu_id}", "{ecu}")) for r in ROUTES]
 BODY = {"entries": [{"item_id": 1, "status": "done", "evidence": "根拠"}]}
 NO_SUCH_ECU = 999_999
 REPO_ROOT = Path(__file__).resolve().parents[2]
