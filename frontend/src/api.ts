@@ -34,8 +34,16 @@ export type EntryOut = {
 };
 
 export type AssessmentView = {
-  assessment: { id: number; version: number; status: AssessmentStatus } | null;
+  assessment: {
+    id: number;
+    version: number;
+    status: AssessmentStatus;
+    /** 差し戻しの理由。状態が差し戻しのときだけ API が入れる（SC3-14） */
+    reject_reason?: string | null;
+  } | null;
   entries: EntryOut[];
+  /** ログインした人がこの版を承認・差し戻しできるか。決めるのは API（SC3-14 の決めたこと5） */
+  can_review?: boolean;
 };
 
 export type ReviewStatus = "unreviewed" | "confirmed" | "change_requested";
@@ -168,6 +176,35 @@ export const saveDraft = (token: string, ecuId: number, entries: EntryIn[]) =>
     body: JSON.stringify({ entries }),
   });
 
+/** 承認申請（入力者）・承認・差し戻し（承認者）。記録する人はログインした本人で、本文で送らない（SC3-14） */
+const postWorkflow = (
+  token: string,
+  ecuId: number,
+  action: "submit" | "approve" | "reject",
+  body?: unknown,
+) =>
+  request<AssessmentView>(token, `/api/ecus/${ecuId}/${action}`, {
+    method: "POST",
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+  });
+
+export const submitAssessment = (token: string, ecuId: number) =>
+  postWorkflow(token, ecuId, "submit");
+
+export const approveAssessment = (token: string, ecuId: number) =>
+  postWorkflow(token, ecuId, "approve");
+
+export const rejectAssessment = (
+  token: string,
+  ecuId: number,
+  reason: string,
+) => postWorkflow(token, ecuId, "reject", { reason });
+
 /** 失敗をオーナーに見せる文言。画面で隠すのではなく、API の判断をそのまま伝える */
 export const messageOf = (error: unknown): string => {
   if (!(error instanceof ApiError))
@@ -180,8 +217,9 @@ export const messageOf = (error: unknown): string => {
     case 404:
       return "見つかりません";
     case 409:
-      // 理由（承認待ち・保存の重なりなど）は、API の detail を ErrorMessage が下に並べる
-      return "保存できませんでした";
+      // 理由（承認待ち・保存の重なり・未入力の項目など）は、API の detail を ErrorMessage が下に並べる。
+      // 保存のほか申請・承認でも出るので「保存」に限らない言い方にする（SC3-14）
+      return "操作できませんでした";
     case 422:
       return "入力を確かめてください";
     default:
