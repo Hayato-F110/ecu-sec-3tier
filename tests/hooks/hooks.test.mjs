@@ -181,10 +181,10 @@ describe("guard-long-foreground", () => {
     assert.equal(blocked.status, 2);
     assert.match(blocked.stderr, /目安/);
     assert.equal(runHook({ ...skill, transcript_path: transcriptWith(NOTICE) }).status, 0);
-    // 前の道具のために書いた知らせのあと、何も書かずに呼ぶと止める（2回目のレビュー）
+    // 道具の結果のあとに書いた文があれば、その文で決める。前の道具のために書いた知らせでは通さない（2回目のレビュー）
     const old = "pytest は目安3分です。待つ間に進める課題：SC3-40";
-    assert.equal(runHook({ ...skill, transcript_path: transcriptWith([said(old), toolResult]) }).status, 2);
-    // 道具の結果のあとに書けば通す
+    const stale = transcriptWith([said(old), toolResult, said("レビューを呼びます。")]);
+    assert.equal(runHook({ ...skill, transcript_path: stale }).status, 2);
     const fresh = transcriptWith([said(old), toolResult, said(NOTICE)]);
     assert.equal(runHook({ ...skill, transcript_path: fresh }).status, 0);
     // 会話の記録を読めないときは通す（進め方の決まりで、秘密を守るものではないため）
@@ -193,6 +193,26 @@ describe("guard-long-foreground", () => {
     // code-review 以外の Skill は見ない
     const other = { tool_name: "Skill", tool_input: { skill: "story" } };
     assert.equal(runHook({ ...other, transcript_path: transcriptWith("") }).status, 0);
+  });
+  test("道具の結果のあとの文が0件なら通す。本物の記録には呼ぶ前の文が入らないため（SC3-49）", () => {
+    const skill = { tool_name: "Skill", tool_input: { skill: "code-review", args: "medium" } };
+    // 2026-11-27 の本物の記録と同じ形：道具を呼ぶ時点の assistant の行は thinking と tool_use だけ
+    const thinking = { type: "assistant", message: { content: [{ type: "thinking", thinking: "レビューを呼ぶ" }] } };
+    const callTool = {
+      type: "assistant",
+      message: { content: [{ type: "tool_use", name: "Skill", input: { skill: "code-review" } }] },
+    };
+    const real = transcriptWith([said("前の文"), toolResult, thinking, callTool]);
+    assert.equal(runHook({ ...skill, transcript_path: real }).status, 0);
+    // 道具の結果のあとに何もない記録も通す。SC3-32 の2回目のレビューで止めていた形だが、本物の記録と見分けが
+    // つかないので、SC3-49 で意図して通す（オーナーの決定。本当に止める仕組みは SC3-50）
+    assert.equal(runHook({ ...skill, transcript_path: transcriptWith([said("前の文"), toolResult]) }).status, 0);
+    // 関数としても、0件の配列は通し、空の文（1件）は今までどおり止める
+    assert.equal(findReviewWithoutNotice("code-review", []), null);
+    // 文を渡さない（undefined・null）のも0件と同じに扱う（SC3-49 のレビュー1回目）
+    assert.equal(findReviewWithoutNotice("code-review"), null);
+    assert.equal(findReviewWithoutNotice("code-review", null), null);
+    assert.notEqual(findReviewWithoutNotice("code-review", [""]), null);
   });
   test("/code-review を、目安と待つ間の課題を書かずに呼ぶと止める（SC3-32）", () => {
     assert.notEqual(findReviewWithoutNotice("code-review", ""), null);
