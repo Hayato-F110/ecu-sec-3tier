@@ -48,20 +48,30 @@ const cellsOf = (line) =>
  * コメントの本文から、証拠の表（見出しに「完了条件」と「証拠」の列があり、中身の行が1つ以上ある表）を探す。
  * 「未達」は、見出しが「結果」か「判定」の列があればその列だけ、なければ「未達」だけのセルを数える
  * （条件の文の中の「未達」という語で止めないため。/code-review の指摘 4）。
- * 返す値：{ table: 表があるか, unmet: 未達の行の数 }
+ * 証拠の列に「PR #番号」があれば、同じセルにその番号の PR の URL（github.com/…/pull/番号）が要る
+ * （SC3-52。Jira から押して開けるように。2026-11-28 にオーナーが決めた）。
+ * 返す値：{ table: 表があるか, unmet: 未達の行の数, unlinked: URL のない「PR #番号」の一覧 }
  */
+export const unlinkedPrsOf = (cell) =>
+  [...String(cell).matchAll(/PR\s*#(\d+)/g)]
+    .filter((m) => !new RegExp(`https://github\\.com/[^\\s)]+/pull/${m[1]}(?!\\d)`).test(cell))
+    .map((m) => `PR #${m[1]}`);
+
 export const evidenceTableOf = (body) => {
   const lines = String(body ?? "").split(/\r?\n/);
   let table = false;
   let unmet = 0;
+  const unlinked = [];
   let header = null; // 今読んでいる証拠の表の見出し（表の外では null）
   let rows = 0;
   let unmetHere = 0;
+  let unlinkedHere = [];
   const close = () => {
     // 見出しだけで中身の行がない表は、表とみなさない（/code-review の指摘 2）
     if (header !== null && rows > 0) {
       table = true;
       unmet += unmetHere;
+      unlinked.push(...unlinkedHere);
     }
     header = null;
   };
@@ -76,6 +86,7 @@ export const evidenceTableOf = (body) => {
         header = cells;
         rows = 0;
         unmetHere = 0;
+        unlinkedHere = [];
       }
       continue;
     }
@@ -89,9 +100,13 @@ export const evidenceTableOf = (body) => {
         ? (cells[resultCol] ?? "").includes("未達")
         : cells.some((c, i) => !(header[i] ?? "").includes("完了条件") && c.includes("未達"));
     if (isUnmet) unmetHere += 1;
+    // 証拠の列（見出しに「証拠」を含む列）だけを見る。完了条件の文の中の「PR #」は見ない
+    header.forEach((h, i) => {
+      if (h.includes("証拠")) unlinkedHere.push(...unlinkedPrsOf(cells[i] ?? ""));
+    });
   }
   close();
-  return { table, unmet };
+  return { table, unmet, unlinked };
 };
 
 /** 会話の記録（JSONL を読んだもの）から、その課題に書いた、成功したコメントの本文を集める */
@@ -162,6 +177,13 @@ export const doneDecision = (toolInput, entries) => {
     return (
       `${key} の証拠の表に「未達」が ${last.unmet} 行あります。未達が1つでもあれば完了にしません。` +
       "未達の部分をほかの課題に移すのは完了条件を書き換えることなので、選択肢としてオーナーに出してください。"
+    );
+  }
+  if (last.unlinked.length > 0) {
+    return (
+      `${key} の証拠の表の ${[...new Set(last.unlinked)].join("・")} に、PR の URL のリンクがありません。` +
+      "Jira から押して開けるよう、[PR #42](https://github.com/<持ち主>/<リポジトリ>/pull/42) の形で書き直してから、" +
+      "もう一度「完了」に移してください（SC3-52。2026-11-28 にオーナーが決めた）。"
     );
   }
   return null;
