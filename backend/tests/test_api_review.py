@@ -341,3 +341,59 @@ def test_change_request_comment_time_is_review_time(api: Api) -> None:
     a = approved_of(api.session, ecu)
     comment = api.session.scalars(select(Comment).where(Comment.assessment_id == a.id)).one()
     assert comment.created_at == a.reviewed_at
+
+
+# ---- レビュー2回目の直し ----
+
+
+@pytest.mark.parametrize("step", ["flush", "commit"])
+def test_db_constraint_error_is_409_and_changes_nothing(
+    api: Api, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """修正依頼のコメントを DB に送るとき（flush）も確定のとき（commit）も、
+    DB の制約違反は 500 ではなく 409 にし、何も残さない（ほかの書き込みの API とそろえる）"""
+    from sqlalchemy.exc import IntegrityError
+
+    s = api.session
+    original_flush = s.flush
+
+    def flush(*args, **kwargs):
+        if any(isinstance(o, Comment) for o in s.new):
+            raise IntegrityError("INSERT", {}, Exception("conflict"))
+        return original_flush(*args, **kwargs)
+
+    def commit() -> None:
+        raise IntegrityError("COMMIT", {}, Exception("conflict"))
+
+    before = snapshot(s)
+    if step == "flush":
+        monkeypatch.setattr(s, "flush", flush)
+    else:
+        monkeypatch.setattr(s, "commit", commit)
+    res = request_change(api, api.ecu(APPROVED_ONLY))
+    monkeypatch.undo()
+    assert res.status_code == 409, res.text
+    assert snapshot(s) == before
+
+
+def test_version_newer_than_latest_approved_is_409_with_own_message(api: Api) -> None:
+    """まだない先の版の番号は、「新しい版が承認されました」と言わない（確認者が誤解しない）"""
+    ecu = api.ecu(APPROVED_ONLY)
+    before = snapshot(api.session)
+    res = confirm(api, ecu, version=5)
+    assert res.status_code == 409
+    assert res.json()["detail"] == "その版はまだ承認されていません"
+    assert snapshot(api.session) == before
+
+
+def test_review_time_is_db_time(api: Api) -> None:
+    """確認の日時は DB の時計（ほかのコメント・監査ログと同じ時計）。並べたとき前後しない"""
+    ecu = api.ecu(APPROVED_ONLY)
+    assert request_change(api, ecu).status_code == 200
+    api.session.expire_all()
+    a = approved_of(api.session, ecu)
+    log = api.session.scalars(
+        select(AuditLog).where(AuditLog.action == "request_change").order_by(AuditLog.id.desc())
+    ).first()
+    assert log is not None
+    assert a.reviewed_at == log.created_at

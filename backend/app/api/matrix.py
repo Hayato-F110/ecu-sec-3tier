@@ -7,11 +7,11 @@
 - 一覧は読むだけなので監査ログは書かない。確認完了・修正依頼は監査ログに残す
 """
 
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.ecus import client_ip, commit_with_log
 from app.deps import Db, OemUser, reviewer_of_ecu
@@ -123,7 +123,9 @@ def review(body: ReviewIn, target: Reviewer, db: Db, request: Request) -> Review
     ).one_or_none()
     if current is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="承認済みの版がありません")
-    if current.version != body.version:
+    if body.version > current.version:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="その版はまだ承認されていません")
+    if body.version < current.version:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="新しい版が承認されました。見直してください"
         )
@@ -132,7 +134,9 @@ def review(body: ReviewIn, target: Reviewer, db: Db, request: Request) -> Review
 
     current.review_status = body.result
     current.reviewed_by = user.id
-    current.reviewed_at = datetime.now(UTC)
+    # DB の時計（トランザクションの開始の時刻）。ほかのコメント・監査ログの日時（server_default
+    # の now()）と同じ時計にし、アプリと DB の時計のずれで並びが前後しないようにする
+    current.reviewed_at = db.scalar(select(func.now()))
     if isinstance(body, ChangeRequestIn):
         # コメントの日時は確認の日時にそろえる（同じ1回の操作なので、並べたとき前後しない）
         comment = Comment(
@@ -143,7 +147,15 @@ def review(body: ReviewIn, target: Reviewer, db: Db, request: Request) -> Review
             created_at=current.reviewed_at,
         )
         db.add(comment)
-        db.flush()
+        # コメントの番号を得るために DB へ送る。ここで制約に当たっても 500 にせず、
+        # 確定のときと同じく 409 にし、何も残さない
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail="ほかの操作と重なりました。やり直してください"
+            ) from exc
         # コメントも監査ログでたどれるように、コメントの番号の行を足す（本文は入れない。決まり5）
         db.add(
             AuditLog(

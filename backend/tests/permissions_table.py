@@ -3,6 +3,10 @@
 新しい API を足したら、ここに行を足す。足さないと tests/test_permissions.py の #2 が落ちる。
 URL に番号を持つ API は、`foreign` に「他社のデータを読もうとする組み合わせ」を必ず書く
 （CLAUDE.md 守りの決まり7：新しい API には、他社のユーザーで呼んで 404 になるテストを入れる）。
+例外は `foreign_status=403` だけ：メーカー用（kind=OEM）で、サプライヤを ECU を探す前に断る API
+（確認。2026-11-28 にオーナーが決めた。docs/test-plans/SC3-15.md）。サプライヤも呼ぶ API
+（コメントなど）は kind を OEM にせず、他社には 404 にする。
+test_foreign_status_is_403_only_for_oem_routes が、403 を OEM の行だけに限る。
 
 各行の関数は、テストの DB（ダミーデータ入り）を受け取って、URL の番号や本文を返す。
 """
