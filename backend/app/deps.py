@@ -114,6 +114,25 @@ def own_ecu(ecu_id: EcuId, user: SupplierUser, db: Db) -> Ecu:
 OwnEcu = Annotated[Ecu, Depends(own_ecu)]
 
 
+def any_ecu(ecu_id: EcuId, user: OemUser, db: Db) -> Ecu:
+    """メーカーには全社の ECU が見える（隠す相手がない）。存在しない番号だけが 404。
+    サプライヤは oem_user で ECU を探す前に 403（他社の ECU でも、ない番号でも同じ応答）"""
+    ecu = db.get(Ecu, ecu_id)
+    if ecu is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="見つかりません")
+    return ecu
+
+
+AnyEcu = Annotated[Ecu, Depends(any_ecu)]
+
+
+def reviewer_of_ecu(ecu: AnyEcu, user: OemUser) -> tuple[Ecu, User]:
+    """確認完了・修正依頼ができるのは確認者だけ（システム管理者は読むだけ）。404 → 403 の順"""
+    if user.role != "reviewer":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="この操作はできません")
+    return ecu, user
+
+
 def editor_of_own_ecu(ecu: OwnEcu, user: SupplierUser) -> tuple[Ecu, User]:
     """下書きを保存できるのは入力者だけ。自社の ECU かを先に調べる（404 → 403 の順）。"""
     if user.role != "editor":

@@ -102,6 +102,15 @@ def reject_body(_s: Session) -> dict:
     return {"reason": "権限のテスト"}
 
 
+def ecu_unreviewed(s: Session) -> Params:
+    # 承認済み（未確認）だけの ECU（確認者の修正依頼が 200 になる形）
+    return {"ecu_id": ecu_by_part_no(s, "DMY-A001").id}
+
+
+def change_request_body(_s: Session) -> dict:
+    return {"result": "change_requested", "reason": "権限のテスト"}
+
+
 def draft_body(s: Session) -> dict:
     first_item = s.scalars(select(MeasureItem.id).order_by(MeasureItem.sort_order)).first()
     return {"entries": [{"item_id": first_item, "status": "done", "evidence": "権限のテスト"}]}
@@ -121,6 +130,9 @@ class Route:
     own: Callable[[Session], Params] = no_params
     # 他社のデータを読もうとする（呼ぶ人, 番号）の組み合わせ。URL に番号を持つ API では必須
     foreign: Callable[[Session], list[tuple[str, Params]]] | None = None
+    # 他社のデータと存在しない番号に返す状態の番号。ふつうは 404。メーカー用の API では、
+    # サプライヤは ECU を探す前に 403 になるので 403（どちらでも、他社と存在しない番号で同じ応答）
+    foreign_status: int = 404
     missing: Callable[[Session], Params] | None = None
     # 会社の種類が食い違う利用者で試す番号
     probes: Callable[[Session], list[Params]] = field(default=lambda s: [{}])
@@ -195,6 +207,20 @@ ROUTES: tuple[Route, ...] = (
         "/api/matrix",
         OEM,
         dict.fromkeys(OEM_ROLES, 200) | dict.fromkeys(SUPPLIER_ROLES, 403),
+    ),
+    # メーカー用で URL に番号を持つ。サプライヤは ECU を探す前に 403 なので、他社（B 社）から
+    # 呼んでも存在しない番号と同じ 403（存在は漏れない。#5 で確かめる）
+    Route(
+        "POST",
+        "/api/matrix/ecus/{ecu_id}/review",
+        OEM,
+        {"reviewer": 200, "sys_admin": 403} | dict.fromkeys(SUPPLIER_ROLES, 403),
+        own=ecu_unreviewed,
+        foreign=ecu_foreign,
+        foreign_status=403,
+        missing=ecu_missing,
+        probes=ecu_probes,
+        body=change_request_body,
     ),
 )
 

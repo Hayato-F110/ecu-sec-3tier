@@ -96,6 +96,29 @@ class RejectIn(BaseModel):
     reason: ReasonText
 
 
+class ConfirmIn(BaseModel):
+    """メーカーの確認完了。理由の欄はない"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result: Literal["confirmed"]
+
+
+class ChangeRequestIn(BaseModel):
+    """メーカーの修正依頼。理由が必須（空白だけ・長すぎるのは 422）"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result: Literal["change_requested"]
+    reason: ReasonText
+
+
+class ReviewOut(BaseModel):
+    ecu_id: int
+    version: int
+    review_status: str
+
+
 class AssessmentOut(BaseModel):
     id: int
     version: int

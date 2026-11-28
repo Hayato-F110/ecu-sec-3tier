@@ -143,8 +143,15 @@ def test_other_company_data_is_404_on_every_route_with_ids(api: Api, route: Rout
     before = snapshot(api.session)
     for email, params in cases:
         res = call(api, route, params, api.headers(email))
-        assert res.status_code == 404, (email, params, res.text)
+        assert res.status_code == route.foreign_status, (email, params, res.text)
     assert snapshot(api.session) == before
+
+
+def test_foreign_status_is_403_only_for_oem_routes() -> None:
+    """403 にしてよいのは、サプライヤが ECU を探す前に断られるメーカー用の API だけ。
+    サプライヤ用の API で他社に 403 を返すと、存在が漏れる（決まり2）"""
+    for route in PARAM_ROUTES:
+        assert route.foreign_status == (403 if route.kind == OEM else 404), route.path
 
 
 # ---- #4 一覧は自社の ECU だけ・全部 ----
@@ -170,7 +177,7 @@ def test_other_company_looks_the_same_as_missing(api: Api, route: Route) -> None
         headers = api.headers(email)
         other = call(api, route, params, headers)
         none = call(api, route, missing, headers)
-        assert other.status_code == none.status_code == 404
+        assert other.status_code == none.status_code == route.foreign_status
         assert other.content == none.content
         assert other.headers.get("content-type") == none.headers.get("content-type")
 
@@ -260,7 +267,8 @@ def test_extra_fields_in_other_write_bodies_are_422(api: Api, route) -> None:
     b_ecu = api.session.scalars(select(Ecu).where(Ecu.supplier_id == b.id)).first()
     assert b_ecu is not None
     role = next(r for r, code in route.allowed.items() if code == 200)
-    email = next(e for e in A_USERS if e.startswith(f"a-{role}@"))
+    # メーカー用の API（確認）は、メーカーの利用者で呼ぶ
+    email = next(e for e in A_USERS + OEM_USERS if e.split("@")[0].endswith(f"-{role}"))
     base = route.body(api.session) if route.body else {}
     url = route.url(route.own(api.session))
     before = snapshot(api.session)

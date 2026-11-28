@@ -12,7 +12,15 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Assessment, AssessmentEntry, AuditLog, Ecu, MeasureItem
+from app.models import (
+    Assessment,
+    AssessmentEntry,
+    AuditLog,
+    Comment,
+    CommentRead,
+    Ecu,
+    MeasureItem,
+)
 from tests.api_helpers import Api
 
 A_EDITOR = "a-editor@example.com"
@@ -77,7 +85,14 @@ def snapshot(s: Session) -> tuple:
         for e in s.scalars(select(AssessmentEntry).order_by(AssessmentEntry.id))
     ]
     logs = s.scalar(select(func.count()).select_from(AuditLog))
-    return vs, es, logs
+    # コメントと既読も比べる（断られた修正依頼・コメントの投稿で、何も残らないことを
+    # 確かめる。SC3-15）
+    cs = [
+        (c.id, c.assessment_id, c.item_id, c.parent_id, c.author_id, c.kind, c.body)
+        for c in s.scalars(select(Comment).order_by(Comment.id))
+    ]
+    reads = sorted(s.execute(select(CommentRead.user_id, CommentRead.comment_id)).tuples())
+    return vs, es, logs, cs, reads
 
 
 def item_ids(s: Session) -> list[int]:
