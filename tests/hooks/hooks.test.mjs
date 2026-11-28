@@ -204,7 +204,8 @@ describe("guard-long-foreground", () => {
     };
     const real = transcriptWith([said("前の文"), toolResult, thinking, callTool]);
     assert.equal(runHook({ ...skill, transcript_path: real }).status, 0);
-    // 道具の結果のあとに何もない記録も通す
+    // 道具の結果のあとに何もない記録も通す。SC3-32 の2回目のレビューで止めていた形だが、本物の記録と見分けが
+    // つかないので、SC3-49 で意図して通す（オーナーの決定。本当に止める仕組みは SC3-50）
     assert.equal(runHook({ ...skill, transcript_path: transcriptWith([said("前の文"), toolResult]) }).status, 0);
     // 関数としても、0件の配列は通し、空の文（1件）は今までどおり止める
     assert.equal(findReviewWithoutNotice("code-review", []), null);

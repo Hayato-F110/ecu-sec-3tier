@@ -115,8 +115,8 @@ export const findReviewWithoutNotice = (skill, texts) => {
   // 文を渡さない（undefined・null）のも0件と同じ（SC3-49 のレビュー1回目）
   const list = texts == null ? [] : Array.isArray(texts) ? texts : [texts];
   // 文が1つも読めないときは通す（SC3-49。本物の会話の記録には、道具を呼ぶ時点で書いた文が入らず、
-  // thinking と tool_use だけになる。記録を読めないときに通すのと同じ考え。2026-11-27 にオーナーが決め、
-  // 2026-11-28 に変えた。そのため今の環境では、知らせなしの /code-review もほぼ止まらない）
+  // thinking と tool_use だけになる。記録を読めないときに通すのと同じ考え。2026-11-27 にオーナーが決めた方針を、
+  // 2026-11-28 に Claude が実装した。そのため今の環境では、知らせなしの /code-review もほぼ止まらない。本当に止める仕組みは SC3-50）
   if (list.length === 0) return null;
   const plain = String(list.at(-1) ?? "");
   if (!ESTIMATE.test(plain)) return "/code-review を、目安の時間（数字か「分」）を書かずに呼ぼうとした";
