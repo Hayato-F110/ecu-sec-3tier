@@ -497,7 +497,7 @@ describe("承認フロー（docs/test-plans/SC3-14.md #12）", () => {
     renderAs("approver");
     expect(
       await screen.findByText(
-        "自分の申請は承認できません（未入力の項目がある版も承認できません）",
+        "未入力の項目があるか、自分の申請のため、この版は承認できません",
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "承認" })).toBeNull();
@@ -532,4 +532,126 @@ describe("承認フロー（docs/test-plans/SC3-14.md #12）", () => {
       expect(screen.queryByRole("button", { name: "承認申請" })).toBeNull();
     },
   );
+});
+
+describe("承認フローの直し（SC3-14 の画面のレビュー1回目）", () => {
+  const renderAs = (role: string) =>
+    render(<AssessmentForm token="5" ecuId={12} role={role} />);
+  /** 応答を手で返せる fetch（途中の状態を確かめるため） */
+  const manualFetch = (first: AssessmentView) => {
+    const pendingReplies: ((r: Response) => void)[] = [];
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      if (fetchMock.mock.calls.length === 1)
+        return Promise.resolve(
+          new Response(JSON.stringify(first), { status: 200 }),
+        );
+      void input;
+      return new Promise<Response>((resolve) => pendingReplies.push(resolve));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return {
+      fetchMock,
+      reply: (i: number, body: unknown, status = 200) =>
+        act(() =>
+          pendingReplies[i](new Response(JSON.stringify(body), { status })),
+        ),
+    };
+  };
+
+  it("保存したら「保存していない入力があります」を消す", async () => {
+    const user = userEvent.setup();
+    stubFetch({ status: 200, body: view() }, { status: 200, body: view() });
+    renderAs("editor");
+    await user.type(
+      await screen.findByLabelText("セキュアブート の根拠"),
+      "追記",
+    );
+    await user.click(screen.getByRole("button", { name: "承認申請" }));
+    await screen.findByText(
+      "保存していない入力があります。先に下書きを保存してください",
+    );
+    await user.click(screen.getByRole("button", { name: "下書きを保存" }));
+    await screen.findByText("保存しました");
+    expect(
+      screen.queryByText(
+        "保存していない入力があります。先に下書きを保存してください",
+      ),
+    ).toBeNull();
+  });
+
+  it("申請が失敗したあと保存に成功したら、申請のエラーを消す", async () => {
+    const user = userEvent.setup();
+    stubFetch(
+      { status: 200, body: view() },
+      { status: 409, body: { detail: "未入力の項目があります" } },
+      { status: 200, body: view() },
+    );
+    renderAs("editor");
+    await user.click(await screen.findByRole("button", { name: "承認申請" }));
+    await screen.findByText("未入力の項目があります");
+    await user.type(screen.getByLabelText("セキュアブート の根拠"), "追記");
+    await user.click(screen.getByRole("button", { name: "下書きを保存" }));
+    await screen.findByText("保存しました");
+    expect(screen.queryByText("未入力の項目があります")).toBeNull();
+  });
+
+  it("保存が失敗したあと申請に成功したら、保存のエラーを消す", async () => {
+    const user = userEvent.setup();
+    stubFetch(
+      { status: 200, body: view() },
+      { status: 409, body: { detail: "ほかの操作と重なりました" } },
+      {
+        status: 200,
+        body: view({ assessment: { id: 7, version: 2, status: "pending" } }),
+      },
+    );
+    renderAs("editor");
+    // 入力を変えずに保存して失敗 → 保存していない入力はないので、そのまま申請できる
+    await user.click(
+      await screen.findByRole("button", { name: "下書きを保存" }),
+    );
+    await screen.findByText("ほかの操作と重なりました");
+    await user.click(screen.getByRole("button", { name: "承認申請" }));
+    await screen.findByText("版 2：承認待ち");
+    expect(screen.queryByText("ほかの操作と重なりました")).toBeNull();
+  });
+
+  it("申請の途中は、保存・申請のボタンと入力欄を使えない", async () => {
+    const user = userEvent.setup();
+    const { reply } = manualFetch(view());
+    renderAs("editor");
+    await user.click(await screen.findByRole("button", { name: "承認申請" }));
+    const save = screen.getByRole("button", { name: "下書きを保存" });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "承認申請" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("セキュアブート の根拠") as HTMLTextAreaElement)
+        .disabled,
+    ).toBe(true);
+    await reply(
+      0,
+      view({ assessment: { id: 7, version: 2, status: "pending" } }),
+    );
+    expect(await screen.findByText("版 2：承認待ち")).toBeTruthy();
+  });
+
+  it("保存の途中は、申請のボタンを押せない", async () => {
+    const user = userEvent.setup();
+    const { reply } = manualFetch(view());
+    renderAs("editor");
+    await user.type(
+      await screen.findByLabelText("セキュアブート の根拠"),
+      "追記",
+    );
+    await user.click(screen.getByRole("button", { name: "下書きを保存" }));
+    expect(
+      (screen.getByRole("button", { name: "承認申請" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    await reply(0, view());
+    expect(await screen.findByText("保存しました")).toBeTruthy();
+  });
 });

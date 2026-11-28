@@ -246,7 +246,10 @@ export const AssessmentForm = ({
     event.preventDefault();
     const sentFor = target;
     setSaving(true);
+    // 前の操作（申請など）のエラーと知らせも消す（成功のあとに古い失敗を残さない。SC3-14 のレビュー1回目）
     setSaveError(null);
+    setActionError(null);
+    setUnsavedNotice(false);
     setSavedFor(null);
     try {
       const result = await saveDraft(token, ecuId, entries);
@@ -270,6 +273,8 @@ export const AssessmentForm = ({
     const sentFor = target;
     setActing(true);
     setActionError(null);
+    setSaveError(null);
+    setUnsavedNotice(false);
     setSavedFor(null);
     try {
       const result = await call();
@@ -297,6 +302,9 @@ export const AssessmentForm = ({
     void act(() => submitAssessment(token, ecuId));
   };
 
+  // 保存か申請・承認・差し戻しの途中。どちらかの途中は、ほかの操作と入力をさせない（応答の順で画面の状態が
+  // サーバーとずれたり、途中の入力が知らせなく消えたりしないように。SC3-14 のレビュー1回目）
+  const busy = saving || acting;
   const status = view.assessment?.status;
   const canSubmit = role === "editor" && status === "draft";
   const canReview = role === "approver" && view.can_review === true;
@@ -336,6 +344,7 @@ export const AssessmentForm = ({
                 <select
                   aria-label={`${r.title} の状態`}
                   value={r.status}
+                  disabled={acting}
                   onChange={(e) =>
                     update(r.item_id, {
                       status: e.target.value as Row["status"],
@@ -356,6 +365,7 @@ export const AssessmentForm = ({
                 <textarea
                   aria-label={`${r.title} の根拠`}
                   value={r.evidence}
+                  disabled={acting}
                   maxLength={EVIDENCE_MAX}
                   rows={2}
                   onChange={(e) =>
@@ -368,7 +378,7 @@ export const AssessmentForm = ({
                   type="date"
                   aria-label={`${r.title} の対応予定日`}
                   value={needsPlannedDate(r.status) ? r.planned_date : ""}
-                  disabled={!needsPlannedDate(r.status)}
+                  disabled={acting || !needsPlannedDate(r.status)}
                   onChange={(e) =>
                     update(r.item_id, { planned_date: e.target.value })
                   }
@@ -378,7 +388,7 @@ export const AssessmentForm = ({
           ))}
         </tbody>
       </table>
-      <button type="submit" disabled={entries.length === 0 || saving}>
+      <button type="submit" disabled={entries.length === 0 || busy}>
         下書きを保存
       </button>
       {savedFor === target && <p role="status">保存しました</p>}
@@ -387,7 +397,7 @@ export const AssessmentForm = ({
       )}
       {canSubmit && (
         <p>
-          <button type="button" onClick={onRequestApproval} disabled={acting}>
+          <button type="button" onClick={onRequestApproval} disabled={busy}>
             承認申請
           </button>
         </p>
@@ -402,7 +412,7 @@ export const AssessmentForm = ({
           <button
             type="button"
             onClick={() => void act(() => approveAssessment(token, ecuId))}
-            disabled={acting}
+            disabled={busy}
           >
             承認
           </button>
@@ -420,16 +430,14 @@ export const AssessmentForm = ({
             onClick={() =>
               void act(() => rejectAssessment(token, ecuId, reason))
             }
-            disabled={acting || reason.trim() === ""}
+            disabled={busy || reason.trim() === ""}
           >
             差し戻し
           </button>
         </div>
       )}
       {cannotReview && (
-        <p>
-          自分の申請は承認できません（未入力の項目がある版も承認できません）
-        </p>
+        <p>未入力の項目があるか、自分の申請のため、この版は承認できません</p>
       )}
       {actionError !== null && actionError.target === target && (
         <ErrorMessage error={actionError.error} />
