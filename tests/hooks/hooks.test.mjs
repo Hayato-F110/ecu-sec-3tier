@@ -380,6 +380,22 @@ describe("guard-done-evidence", () => {
     // 指摘3：表がないときの知らせに、PR はリンクで書くことを入れる
     assert.match(doneDecision(done("SC3-8"), []), /PR は.*リンク/);
   });
+  test("PR の数え方の直し（SC3-52 のレビュー2回目）", () => {
+    const row = (evidence) => `| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| テストが通る | ${evidence} | 達成 |`;
+    const blocked = (evidence) => doneDecision(done("SC3-8"), comment("SC3-8", row(evidence)));
+    // 指摘1：見出しのセルに「完了条件」と「証拠」が両方あっても、ほかの列の PR を見る
+    const merged = "| 完了条件（証拠の種類） | 確認 | 結果 |\n| --- | --- | --- |\n| テストが通る | PR #42 | 達成 |";
+    assert.match(String(doneDecision(done("SC3-8"), comment("SC3-8", merged))), /PR #42/);
+    // 指摘2：PR を挙げたセルの、あとに続く「#番号」も PR とみなす
+    assert.match(String(blocked("[PR #41](https://github.com/o/r/pull/41)・#42")), /PR #42/);
+    assert.equal(blocked("[PR #41](https://github.com/o/r/pull/41)・[#42](https://github.com/o/r/pull/42)"), null);
+    // 指摘3：「PR 2 本」は PR の番号とみなさない
+    assert.equal(blocked("PR 2 本（[PR #41](https://github.com/o/r/pull/41)・[PR #42](https://github.com/o/r/pull/42)）"), null);
+    // 指摘4：全角の数字も見る
+    assert.match(String(blocked("PR #４２（マージ済み）")), /PR #42/);
+    // 指摘5：先頭の 0 は数として比べる
+    assert.equal(blocked("PR #042 https://github.com/o/r/pull/42"), null);
+  });
   test("名前での完了の指定と、URL の課題キーを読む", () => {
     assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Done" }, []), null);
     assert.equal(keyOf("https://example.atlassian.net/browse/SC3-12"), "SC3-12");

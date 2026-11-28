@@ -55,13 +55,21 @@ const cellsOf = (line) =>
  */
 // PR の書き方：PR #42・pr #42・PR ＃42（全角）・PR-42・PR42・Pull Request #42。「#42」だけは、課題などほかの
 // 番号と見分けられないので数えない（SC3-52 のレビュー1回目の指摘1・8）
-const PR_MENTION = /(?<![A-Za-z])(?:PR|pull\s*request)\s*[-#＃]?\s*(\d+)/gi;
-export const unlinkedPrsOf = (cell) => {
-  // 逆引用符の中の URL は Jira で押せないので、リンクとみなさない（指摘2）
-  const clickable = String(cell).replace(/`[^`]*`/g, "");
-  return [...String(cell).matchAll(PR_MENTION)]
-    .filter((m) => !new RegExp(`https://github\\.com/[^\\s)\`]+/pull/${m[1]}(?!\\d)`).test(clickable))
-    .map((m) => `PR #${m[1]}`);
+// レビュー2回目の指摘3：PR と数字の間に空白があるときは「#」「-」を求める（「PR 2 本」を番号とみなさない）
+const PR_MENTION = /(?<![A-Za-z])(?:PR|pull[\s-]*request)(?:\s*[-#]\s*)?(\d+)/gi;
+export const unlinkedPrsOf = (raw) => {
+  // 全角の英数字・＃を半角にそろえる（指摘4）
+  const cell = String(raw).normalize("NFKC");
+  // 逆引用符の中の URL は Jira で押せないので、リンクとみなさない（レビュー1回目の指摘2）
+  const clickable = cell.replace(/`[^`]*`/g, "");
+  const linked = new Set([...clickable.matchAll(/https:\/\/github\.com\/[^\s)`]+\/pull\/(\d+)/g)].map((m) => Number(m[1])));
+  const mentioned = [...cell.matchAll(PR_MENTION)].map((m) => Number(m[1]));
+  // PR を挙げたセルでは、あとに続く「#番号」も PR とみなす（「PR #41・#42」。指摘2）
+  if (mentioned.length > 0) {
+    for (const m of cell.matchAll(/(?<![\w/])#(\d+)/g)) mentioned.push(Number(m[1]));
+  }
+  // 数として比べる（PR #042 と /pull/42 は同じ。指摘5）
+  return [...new Set(mentioned)].filter((n) => !linked.has(n)).map((n) => `PR #${n}`);
 };
 
 export const evidenceTableOf = (body) => {
@@ -109,9 +117,12 @@ export const evidenceTableOf = (body) => {
     if (isUnmet) unmetHere += 1;
     // 証拠の列（見出しに「証拠」を含み、「完了条件」を含まない列）だけを見る。完了条件の文の中の「PR #」は見ない
     // （「完了条件（証拠の種類）」の列を取り違えない。指摘5）
-    header.forEach((h, i) => {
-      if (h.includes("証拠") && !h.includes("完了条件")) unlinkedHere.push(...unlinkedPrsOf(cells[i] ?? ""));
-    });
+    // 証拠だけの列がないとき（1つのセルに「完了条件」と「証拠」が両方ある見出し）は、完了条件の列のほかを全部見る
+    // （どの列も見ずに通さない。レビュー2回目の指摘1）。限界：証拠の列があるときは、ほかの列（備考など）は見ない
+    const evidenceCols = header.flatMap((h, i) => (h.includes("証拠") && !h.includes("完了条件") ? [i] : []));
+    const cols =
+      evidenceCols.length > 0 ? evidenceCols : header.flatMap((h, i) => (h.includes("完了条件") ? [] : [i]));
+    for (const i of cols) unlinkedHere.push(...unlinkedPrsOf(cells[i] ?? ""));
   }
   close();
   return { table, unmet, unlinked };
