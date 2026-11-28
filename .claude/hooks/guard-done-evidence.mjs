@@ -40,8 +40,9 @@ const cellsOf = (line) =>
   line
     .trim()
     .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
+    .replace(/(?<!\\)\|$/, "")
+    // セルの中の「\|」（文字としての縦線）では分けない（SC3-52 のレビュー1回目の指摘4）
+    .split(/(?<!\\)\|/)
     .map((c) => c.trim());
 
 /**
@@ -52,10 +53,16 @@ const cellsOf = (line) =>
  * （SC3-52。Jira から押して開けるように。2026-11-28 にオーナーが決めた）。
  * 返す値：{ table: 表があるか, unmet: 未達の行の数, unlinked: URL のない「PR #番号」の一覧 }
  */
-export const unlinkedPrsOf = (cell) =>
-  [...String(cell).matchAll(/PR\s*#(\d+)/g)]
-    .filter((m) => !new RegExp(`https://github\\.com/[^\\s)]+/pull/${m[1]}(?!\\d)`).test(cell))
+// PR の書き方：PR #42・pr #42・PR ＃42（全角）・PR-42・PR42・Pull Request #42。「#42」だけは、課題などほかの
+// 番号と見分けられないので数えない（SC3-52 のレビュー1回目の指摘1・8）
+const PR_MENTION = /(?<![A-Za-z])(?:PR|pull\s*request)\s*[-#＃]?\s*(\d+)/gi;
+export const unlinkedPrsOf = (cell) => {
+  // 逆引用符の中の URL は Jira で押せないので、リンクとみなさない（指摘2）
+  const clickable = String(cell).replace(/`[^`]*`/g, "");
+  return [...String(cell).matchAll(PR_MENTION)]
+    .filter((m) => !new RegExp(`https://github\\.com/[^\\s)\`]+/pull/${m[1]}(?!\\d)`).test(clickable))
     .map((m) => `PR #${m[1]}`);
+};
 
 export const evidenceTableOf = (body) => {
   const lines = String(body ?? "").split(/\r?\n/);
@@ -100,9 +107,10 @@ export const evidenceTableOf = (body) => {
         ? (cells[resultCol] ?? "").includes("未達")
         : cells.some((c, i) => !(header[i] ?? "").includes("完了条件") && c.includes("未達"));
     if (isUnmet) unmetHere += 1;
-    // 証拠の列（見出しに「証拠」を含む列）だけを見る。完了条件の文の中の「PR #」は見ない
+    // 証拠の列（見出しに「証拠」を含み、「完了条件」を含まない列）だけを見る。完了条件の文の中の「PR #」は見ない
+    // （「完了条件（証拠の種類）」の列を取り違えない。指摘5）
     header.forEach((h, i) => {
-      if (h.includes("証拠")) unlinkedHere.push(...unlinkedPrsOf(cells[i] ?? ""));
+      if (h.includes("証拠") && !h.includes("完了条件")) unlinkedHere.push(...unlinkedPrsOf(cells[i] ?? ""));
     });
   }
   close();
@@ -169,7 +177,7 @@ export const doneDecision = (toolInput, entries) => {
   if (last === undefined) {
     return (
       `${key} に、完了条件ごとの証拠の表のコメントを、この会話の中でまだ書いていません。` +
-      "getJiraIssue で完了条件を読み直し、見出しに「完了条件」「証拠」「結果」の列がある Markdown の表（証拠は PR・CI の実行・ファイル:行）を、" +
+      "getJiraIssue で完了条件を読み直し、見出しに「完了条件」「証拠」「結果」の列がある Markdown の表（証拠は PR・CI の実行・ファイル:行。PR は [PR #番号](https://github.com/…/pull/番号) のリンクで）を、" +
       "課題キーを指定して addOrEditJiraIssueComment で書いてから、もう一度「完了」に移してください（HTML の表は読めません）。"
     );
   }

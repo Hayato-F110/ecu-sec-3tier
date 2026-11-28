@@ -359,6 +359,27 @@ describe("guard-done-evidence", () => {
     const inCondition = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| PR #9 の直しが通る | `tests/a.mjs:10` | 達成 |";
     assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", inCondition)), null);
   });
+  test("PR の書き方の揺れと、押せない URL も止める（SC3-52 のレビュー1回目）", () => {
+    const row = (evidence) => `| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| テストが通る | ${evidence} | 達成 |`;
+    const blocked = (evidence) => doneDecision(done("SC3-8"), comment("SC3-8", row(evidence)));
+    // 指摘1・8：小文字・全角の＃・Pull Request・PR-42・PR42
+    for (const e of ["pr #42", "PR ＃42", "Pull Request #42 でマージ", "PR-42", "PR42"]) {
+      assert.match(String(blocked(e)), /PR #42/, e);
+    }
+    // 指摘8：「#42」だけの形は、ほかの番号と見分けられないので数えない
+    assert.equal(blocked("#42 の課題"), null);
+    // 指摘2：逆引用符の中の URL は押せないので、リンクとみなさない
+    assert.match(String(blocked("PR #42 `https://github.com/o/r/pull/42`")), /PR #42/);
+    assert.equal(blocked("pr ＃42 https://github.com/o/r/pull/42"), null);
+    // 指摘4：セルの中の \| で列をずらさない
+    const piped = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| a \\| b | PR #4 | 達成 |";
+    assert.match(String(doneDecision(done("SC3-8"), comment("SC3-8", piped))), /PR #4/);
+    // 指摘5：見出しが「完了条件（証拠の種類）」の列は、証拠の列とみなさない
+    const header = "| 完了条件（証拠の種類） | 証拠 | 結果 |\n| --- | --- | --- |\n| PR #9 の直しが通る | `tests/a.mjs:10` | 達成 |";
+    assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", header)), null);
+    // 指摘3：表がないときの知らせに、PR はリンクで書くことを入れる
+    assert.match(doneDecision(done("SC3-8"), []), /PR は.*リンク/);
+  });
   test("名前での完了の指定と、URL の課題キーを読む", () => {
     assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Done" }, []), null);
     assert.equal(keyOf("https://example.atlassian.net/browse/SC3-12"), "SC3-12");
