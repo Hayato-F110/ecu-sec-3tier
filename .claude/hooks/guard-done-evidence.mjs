@@ -40,28 +40,53 @@ const cellsOf = (line) =>
   line
     .trim()
     .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
+    .replace(/(?<!\\)\|$/, "")
+    // セルの中の「\|」（文字としての縦線）では分けない（SC3-52 のレビュー1回目の指摘4）
+    .split(/(?<!\\)\|/)
     .map((c) => c.trim());
 
 /**
  * コメントの本文から、証拠の表（見出しに「完了条件」と「証拠」の列があり、中身の行が1つ以上ある表）を探す。
  * 「未達」は、見出しが「結果」か「判定」の列があればその列だけ、なければ「未達」だけのセルを数える
  * （条件の文の中の「未達」という語で止めないため。/code-review の指摘 4）。
- * 返す値：{ table: 表があるか, unmet: 未達の行の数 }
+ * 証拠の列に「PR #番号」があれば、同じセルにその番号の PR の URL（github.com/…/pull/番号）が要る
+ * （SC3-52。Jira から押して開けるように。2026-11-28 にオーナーが決めた）。
+ * 返す値：{ table: 表があるか, unmet: 未達の行の数, unlinked: URL のない「PR #番号」の一覧 }
  */
+// PR の書き方：PR #42・pr #42・PR ＃42（全角）・PR-42・PR42・Pull Request #42。「#42」だけは、課題などほかの
+// 番号と見分けられないので数えない（SC3-52 のレビュー1回目の指摘1・8）
+// レビュー2回目の指摘3：PR と数字の間に空白があるときは「#」「-」を求める（「PR 2 本」を番号とみなさない）
+const PR_MENTION = /(?<![A-Za-z])(?:PR|pull[\s-]*request)(?:\s*[-#]\s*)?(\d+)/gi;
+export const unlinkedPrsOf = (raw) => {
+  // 全角の英数字・＃を半角にそろえる（指摘4）
+  const cell = String(raw).normalize("NFKC");
+  // 逆引用符の中の URL は Jira で押せないので、リンクとみなさない（レビュー1回目の指摘2）
+  const clickable = cell.replace(/`[^`]*`/g, "");
+  const linked = new Set([...clickable.matchAll(/https:\/\/github\.com\/[^\s)`]+\/pull\/(\d+)/g)].map((m) => Number(m[1])));
+  const mentioned = [...cell.matchAll(PR_MENTION)].map((m) => Number(m[1]));
+  // PR を挙げたセルでは、あとに続く「#番号」も PR とみなす（「PR #41・#42」。指摘2）
+  if (mentioned.length > 0) {
+    for (const m of cell.matchAll(/(?<![\w/])#(\d+)/g)) mentioned.push(Number(m[1]));
+  }
+  // 数として比べる（PR #042 と /pull/42 は同じ。指摘5）
+  return [...new Set(mentioned)].filter((n) => !linked.has(n)).map((n) => `PR #${n}`);
+};
+
 export const evidenceTableOf = (body) => {
   const lines = String(body ?? "").split(/\r?\n/);
   let table = false;
   let unmet = 0;
+  const unlinked = [];
   let header = null; // 今読んでいる証拠の表の見出し（表の外では null）
   let rows = 0;
   let unmetHere = 0;
+  let unlinkedHere = [];
   const close = () => {
     // 見出しだけで中身の行がない表は、表とみなさない（/code-review の指摘 2）
     if (header !== null && rows > 0) {
       table = true;
       unmet += unmetHere;
+      unlinked.push(...unlinkedHere);
     }
     header = null;
   };
@@ -76,6 +101,7 @@ export const evidenceTableOf = (body) => {
         header = cells;
         rows = 0;
         unmetHere = 0;
+        unlinkedHere = [];
       }
       continue;
     }
@@ -89,9 +115,17 @@ export const evidenceTableOf = (body) => {
         ? (cells[resultCol] ?? "").includes("未達")
         : cells.some((c, i) => !(header[i] ?? "").includes("完了条件") && c.includes("未達"));
     if (isUnmet) unmetHere += 1;
+    // 証拠の列（見出しに「証拠」を含み、「完了条件」を含まない列）だけを見る。完了条件の文の中の「PR #」は見ない
+    // （「完了条件（証拠の種類）」の列を取り違えない。指摘5）
+    // 証拠だけの列がないとき（1つのセルに「完了条件」と「証拠」が両方ある見出し）は、完了条件の列のほかを全部見る
+    // （どの列も見ずに通さない。レビュー2回目の指摘1）。限界：証拠の列があるときは、ほかの列（備考など）は見ない
+    const evidenceCols = header.flatMap((h, i) => (h.includes("証拠") && !h.includes("完了条件") ? [i] : []));
+    const cols =
+      evidenceCols.length > 0 ? evidenceCols : header.flatMap((h, i) => (h.includes("完了条件") ? [] : [i]));
+    for (const i of cols) unlinkedHere.push(...unlinkedPrsOf(cells[i] ?? ""));
   }
   close();
-  return { table, unmet };
+  return { table, unmet, unlinked };
 };
 
 /** 会話の記録（JSONL を読んだもの）から、その課題に書いた、成功したコメントの本文を集める */
@@ -154,7 +188,7 @@ export const doneDecision = (toolInput, entries) => {
   if (last === undefined) {
     return (
       `${key} に、完了条件ごとの証拠の表のコメントを、この会話の中でまだ書いていません。` +
-      "getJiraIssue で完了条件を読み直し、見出しに「完了条件」「証拠」「結果」の列がある Markdown の表（証拠は PR・CI の実行・ファイル:行）を、" +
+      "getJiraIssue で完了条件を読み直し、見出しに「完了条件」「証拠」「結果」の列がある Markdown の表（証拠は PR・CI の実行・ファイル:行。PR は [PR #番号](https://github.com/…/pull/番号) のリンクで）を、" +
       "課題キーを指定して addOrEditJiraIssueComment で書いてから、もう一度「完了」に移してください（HTML の表は読めません）。"
     );
   }
@@ -162,6 +196,13 @@ export const doneDecision = (toolInput, entries) => {
     return (
       `${key} の証拠の表に「未達」が ${last.unmet} 行あります。未達が1つでもあれば完了にしません。` +
       "未達の部分をほかの課題に移すのは完了条件を書き換えることなので、選択肢としてオーナーに出してください。"
+    );
+  }
+  if (last.unlinked.length > 0) {
+    return (
+      `${key} の証拠の表の ${[...new Set(last.unlinked)].join("・")} に、PR の URL のリンクがありません。` +
+      "Jira から押して開けるよう、[PR #42](https://github.com/<持ち主>/<リポジトリ>/pull/42) の形で書き直してから、" +
+      "もう一度「完了」に移してください（SC3-52。2026-11-28 にオーナーが決めた）。"
     );
   }
   return null;

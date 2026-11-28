@@ -281,7 +281,7 @@ describe("guard-aws-cost", () => {
 });
 
 describe("guard-done-evidence", () => {
-  const TABLE = ["| 完了条件 | 証拠 | 結果 |", "| --- | --- | --- |", "| テストが通る | PR #3 | 達成 |"].join("\n");
+  const TABLE = ["| 完了条件 | 証拠 | 結果 |", "| --- | --- | --- |", "| テストが通る | [PR #3](https://github.com/o/r/pull/3) | 達成 |"].join("\n");
   // 会話の記録の形：道具の呼び出し（assistant）と、その結果（user）
   const comment = (key, body, id = "t1", isError = false) => [
     { message: { content: [{ type: "tool_use", id, name: "mcp__x__addOrEditJiraIssueComment", input: { issueIdOrKey: key, commentBody: body } }] } },
@@ -317,7 +317,7 @@ describe("guard-done-evidence", () => {
     // 指摘 3：「完了」「done」を含む遷移の名前も見る
     assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Review->Done" }, []), null);
     // 指摘 4：条件の文の中の「未達」では止めない。結果の列の「未達」では止める
-    const wording = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| 未達の行がないこと | PR #5 | 達成 |";
+    const wording = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| 未達の行がないこと | [PR #5](https://github.com/o/r/pull/5) | 達成 |";
     assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", wording)), null);
   });
   test("2 回目の /code-review の指摘の直し", () => {
@@ -341,10 +341,65 @@ describe("guard-done-evidence", () => {
     const tricky = "| 完了条件（期待する結果） | 証拠 | 結果 |\n| --- | --- | --- |\n| テストが通る | PR #3 | 未達 |";
     assert.match(doneDecision(done("SC3-8"), comment("SC3-8", tricky)), /未達/);
   });
+  test("証拠の列に「PR #番号」を書いたら、その番号の PR の URL が要る（SC3-52）", () => {
+    const row = (evidence) => `| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| テストが通る | ${evidence} | 達成 |`;
+    // 文字だけの「PR #42」は止める
+    assert.match(doneDecision(done("SC3-8"), comment("SC3-8", row("PR #42（マージ済み）"))), /PR #42.*リンク/);
+    // 番号の違う URL では止める
+    const wrong = row("[PR #42](https://github.com/o/r/pull/41)");
+    assert.match(doneDecision(done("SC3-8"), comment("SC3-8", wrong)), /PR #42/);
+    // リンクの形・URL をそのまま書いた形は通す
+    assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", row("[PR #42](https://github.com/o/r/pull/42)"))), null);
+    assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", row("PR #42 https://github.com/o/r/pull/42"))), null);
+    // 2つの PR のうち1つだけリンクがないときも止める
+    const two = row("[PR #41](https://github.com/o/r/pull/41)・PR #42");
+    assert.match(doneDecision(done("SC3-8"), comment("SC3-8", two)), /PR #42/);
+    // PR を挙げない証拠（ファイル:行・CI の実行）は今までどおり通す。完了条件の列の「PR #」は見ない
+    assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", row("`tests/a.mjs:10`"))), null);
+    const inCondition = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| PR #9 の直しが通る | `tests/a.mjs:10` | 達成 |";
+    assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", inCondition)), null);
+  });
+  test("PR の書き方の揺れと、押せない URL も止める（SC3-52 のレビュー1回目）", () => {
+    const row = (evidence) => `| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| テストが通る | ${evidence} | 達成 |`;
+    const blocked = (evidence) => doneDecision(done("SC3-8"), comment("SC3-8", row(evidence)));
+    // 指摘1・8：小文字・全角の＃・Pull Request・PR-42・PR42
+    for (const e of ["pr #42", "PR ＃42", "Pull Request #42 でマージ", "PR-42", "PR42"]) {
+      assert.match(String(blocked(e)), /PR #42/, e);
+    }
+    // 指摘8：「#42」だけの形は、ほかの番号と見分けられないので数えない
+    assert.equal(blocked("#42 の課題"), null);
+    // 指摘2：逆引用符の中の URL は押せないので、リンクとみなさない
+    assert.match(String(blocked("PR #42 `https://github.com/o/r/pull/42`")), /PR #42/);
+    assert.equal(blocked("pr ＃42 https://github.com/o/r/pull/42"), null);
+    // 指摘4：セルの中の \| で列をずらさない
+    const piped = "| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| a \\| b | PR #4 | 達成 |";
+    assert.match(String(doneDecision(done("SC3-8"), comment("SC3-8", piped))), /PR #4/);
+    // 指摘5：見出しが「完了条件（証拠の種類）」の列は、証拠の列とみなさない
+    const header = "| 完了条件（証拠の種類） | 証拠 | 結果 |\n| --- | --- | --- |\n| PR #9 の直しが通る | `tests/a.mjs:10` | 達成 |";
+    assert.equal(doneDecision(done("SC3-8"), comment("SC3-8", header)), null);
+    // 指摘3：表がないときの知らせに、PR はリンクで書くことを入れる
+    assert.match(doneDecision(done("SC3-8"), []), /PR は.*リンク/);
+  });
+  test("PR の数え方の直し（SC3-52 のレビュー2回目）", () => {
+    const row = (evidence) => `| 完了条件 | 証拠 | 結果 |\n| --- | --- | --- |\n| テストが通る | ${evidence} | 達成 |`;
+    const blocked = (evidence) => doneDecision(done("SC3-8"), comment("SC3-8", row(evidence)));
+    // 指摘1：見出しのセルに「完了条件」と「証拠」が両方あっても、ほかの列の PR を見る
+    const merged = "| 完了条件（証拠の種類） | 確認 | 結果 |\n| --- | --- | --- |\n| テストが通る | PR #42 | 達成 |";
+    assert.match(String(doneDecision(done("SC3-8"), comment("SC3-8", merged))), /PR #42/);
+    // 指摘2：PR を挙げたセルの、あとに続く「#番号」も PR とみなす
+    assert.match(String(blocked("[PR #41](https://github.com/o/r/pull/41)・#42")), /PR #42/);
+    assert.equal(blocked("[PR #41](https://github.com/o/r/pull/41)・[#42](https://github.com/o/r/pull/42)"), null);
+    // 指摘3：「PR 2 本」は PR の番号とみなさない
+    assert.equal(blocked("PR 2 本（[PR #41](https://github.com/o/r/pull/41)・[PR #42](https://github.com/o/r/pull/42)）"), null);
+    // 指摘4：全角の数字も見る
+    assert.match(String(blocked("PR #４２（マージ済み）")), /PR #42/);
+    // 指摘5：先頭の 0 は数として比べる
+    assert.equal(blocked("PR #042 https://github.com/o/r/pull/42"), null);
+  });
   test("名前での完了の指定と、URL の課題キーを読む", () => {
     assert.notEqual(doneDecision({ issueIdOrKey: "SC3-8", transitionName: "Done" }, []), null);
     assert.equal(keyOf("https://example.atlassian.net/browse/SC3-12"), "SC3-12");
-    assert.deepEqual(evidenceTableOf("| 項目 | 結果 |\n| --- | --- |\n| a | 未達 |"), { table: false, unmet: 0 });
+    assert.deepEqual(evidenceTableOf("| 項目 | 結果 |\n| --- | --- |\n| a | 未達 |"), { table: false, unmet: 0, unlinked: [] });
   });
 });
 
