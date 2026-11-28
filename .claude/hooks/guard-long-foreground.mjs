@@ -113,6 +113,9 @@ const isReview = (skill) => {
 export const findReviewWithoutNotice = (skill, texts) => {
   if (!isReview(String(skill ?? ""))) return null;
   const list = Array.isArray(texts) ? texts : [texts];
+  // 文が1つも読めないときは通す（SC3-49。本物の会話の記録には、道具を呼ぶ時点で書いた文が入らず、
+  // thinking と tool_use だけになる。記録を読めないときに通すのと同じ考え。2026-11-27 にオーナーが決めた）
+  if (list.length === 0) return null;
   const plain = String(list.at(-1) ?? "");
   if (!ESTIMATE.test(plain)) return "/code-review を、目安の時間（数字か「分」）を書かずに呼ぼうとした";
   const m = plain.match(NEXT);
