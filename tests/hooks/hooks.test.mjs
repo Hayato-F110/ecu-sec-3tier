@@ -208,6 +208,9 @@ describe("guard-long-foreground", () => {
     assert.equal(runHook({ ...skill, transcript_path: transcriptWith([said("前の文"), toolResult]) }).status, 0);
     // 関数としても、0件の配列は通し、空の文（1件）は今までどおり止める
     assert.equal(findReviewWithoutNotice("code-review", []), null);
+    // 文を渡さない（undefined・null）のも0件と同じに扱う（SC3-49 のレビュー1回目）
+    assert.equal(findReviewWithoutNotice("code-review"), null);
+    assert.equal(findReviewWithoutNotice("code-review", null), null);
     assert.notEqual(findReviewWithoutNotice("code-review", [""]), null);
   });
   test("/code-review を、目安と待つ間の課題を書かずに呼ぶと止める（SC3-32）", () => {
