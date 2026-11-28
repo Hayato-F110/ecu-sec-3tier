@@ -655,3 +655,94 @@ describe("承認フローの直し（SC3-14 の画面のレビュー1回目）",
     expect(await screen.findByText("保存しました")).toBeTruthy();
   });
 });
+
+describe("承認フローの直し（SC3-14 の画面のレビュー2回目）", () => {
+  const renderAs = (role: string) =>
+    render(<AssessmentForm token="5" ecuId={12} role={role} />);
+  const pendingReview = view({
+    assessment: { id: 7, version: 2, status: "pending" },
+    can_review: true,
+  });
+  /** 1回目の取得だけすぐ返し、2回目からは手で返す fetch */
+  const manualFetch = (first: AssessmentView) => {
+    const replies: ((r: Response) => void)[] = [];
+    let calls = 0; // 何回目の呼び出しか（fetchMock を自分の中で参照すると型が決まらないため）
+    const fetchMock = vi.fn<typeof fetch>(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(new Response(JSON.stringify(first), { status: 200 }))
+        : new Promise<Response>((resolve) => replies.push(resolve));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return (body: unknown) =>
+      act(() => replies.shift()!(new Response(JSON.stringify(body))));
+  };
+
+  it("保存の途中は、入力欄を使えない", async () => {
+    const user = userEvent.setup();
+    const reply = manualFetch(view());
+    renderAs("editor");
+    await user.type(
+      await screen.findByLabelText("セキュアブート の根拠"),
+      "追記",
+    );
+    await user.click(screen.getByRole("button", { name: "下書きを保存" }));
+    for (const label of [
+      "セキュアブート の状態",
+      "セキュアブート の根拠",
+      "デバッグポートの無効化 の対応予定日",
+    ])
+      expect(
+        (screen.getByLabelText(label) as HTMLInputElement).disabled,
+        label,
+      ).toBe(true);
+    await reply(view());
+    expect(await screen.findByText("保存しました")).toBeTruthy();
+  });
+
+  it.each(["承認", "差し戻し"])(
+    "保存していない入力があるまま%sしようとしたら、送らずに知らせる",
+    async (name) => {
+      const user = userEvent.setup();
+      const fetchMock = stubFetch({ status: 200, body: pendingReview });
+      renderAs("approver");
+      await user.type(
+        await screen.findByLabelText("差し戻しの理由"),
+        "根拠が足りません",
+      );
+      await user.type(screen.getByLabelText("セキュアブート の根拠"), "追記");
+      await user.click(screen.getByRole("button", { name }));
+      expect(
+        await screen.findByText(
+          "保存していない入力があります。先に下書きを保存してください",
+        ),
+      ).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("差し戻しの途中は、理由の欄を使えない", async () => {
+    const user = userEvent.setup();
+    const reply = manualFetch(pendingReview);
+    renderAs("approver");
+    await user.type(
+      await screen.findByLabelText("差し戻しの理由"),
+      "根拠が足りません",
+    );
+    await user.click(screen.getByRole("button", { name: "差し戻し" }));
+    expect(
+      (screen.getByLabelText("差し戻しの理由") as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+    await reply(
+      view({
+        assessment: {
+          id: 7,
+          version: 2,
+          status: "rejected",
+          reject_reason: "根拠が足りません",
+        },
+      }),
+    );
+    expect(await screen.findByText("版 2：差し戻し")).toBeTruthy();
+  });
+});

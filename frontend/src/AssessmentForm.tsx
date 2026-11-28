@@ -293,14 +293,17 @@ export const AssessmentForm = ({
     }
   };
 
-  const onRequestApproval = () => {
-    // 申請するのはサーバーに保存した内容。保存していない入力があれば、申請せずに知らせる
+  /** 申請・承認・差し戻しの対象はサーバーに保存した内容。保存していない入力があれば、送らずに知らせる
+   * （応答で入力欄をサーバーの値に戻すので、知らせなく消えないように。承認・差し戻しはレビュー2回目） */
+  const actOnSaved = (call: () => Promise<AssessmentView>) => {
     if (changed.size > 0) {
       setUnsavedNotice(true);
       return;
     }
-    void act(() => submitAssessment(token, ecuId));
+    void act(call);
   };
+  const onRequestApproval = () =>
+    actOnSaved(() => submitAssessment(token, ecuId));
 
   // 保存か申請・承認・差し戻しの途中。どちらかの途中は、ほかの操作と入力をさせない（応答の順で画面の状態が
   // サーバーとずれたり、途中の入力が知らせなく消えたりしないように。SC3-14 のレビュー1回目）
@@ -344,7 +347,7 @@ export const AssessmentForm = ({
                 <select
                   aria-label={`${r.title} の状態`}
                   value={r.status}
-                  disabled={acting}
+                  disabled={busy}
                   onChange={(e) =>
                     update(r.item_id, {
                       status: e.target.value as Row["status"],
@@ -365,7 +368,7 @@ export const AssessmentForm = ({
                 <textarea
                   aria-label={`${r.title} の根拠`}
                   value={r.evidence}
-                  disabled={acting}
+                  disabled={busy}
                   maxLength={EVIDENCE_MAX}
                   rows={2}
                   onChange={(e) =>
@@ -378,7 +381,7 @@ export const AssessmentForm = ({
                   type="date"
                   aria-label={`${r.title} の対応予定日`}
                   value={needsPlannedDate(r.status) ? r.planned_date : ""}
-                  disabled={acting || !needsPlannedDate(r.status)}
+                  disabled={busy || !needsPlannedDate(r.status)}
                   onChange={(e) =>
                     update(r.item_id, { planned_date: e.target.value })
                   }
@@ -411,7 +414,7 @@ export const AssessmentForm = ({
         <div>
           <button
             type="button"
-            onClick={() => void act(() => approveAssessment(token, ecuId))}
+            onClick={() => actOnSaved(() => approveAssessment(token, ecuId))}
             disabled={busy}
           >
             承認
@@ -423,12 +426,13 @@ export const AssessmentForm = ({
               maxLength={EVIDENCE_MAX}
               rows={2}
               onChange={(e) => setReason(e.target.value)}
+              disabled={busy}
             />
           </label>
           <button
             type="button"
             onClick={() =>
-              void act(() => rejectAssessment(token, ecuId, reason))
+              actOnSaved(() => rejectAssessment(token, ecuId, reason))
             }
             disabled={busy || reason.trim() === ""}
           >
