@@ -741,3 +741,34 @@ describe("入力のページの部品（SC3-12.md #18・SC3-35）", () => {
     expect(bAsked).toHaveLength(1);
   });
 });
+
+describe("承認フローのボタン（SC3-14 #12）", () => {
+  it("入力者でログインして入力の画面を開くと、ログインした人の役割で「承認申請」が出る", async () => {
+    const ecu = {
+      id: 1,
+      name: "ゲートウェイ ECU",
+      part_no: "DMY-A001",
+      vehicle_model: "架空セダン",
+      latest_version: 1,
+      latest_status: "draft",
+    };
+    stubApi((url) => {
+      if (url === "/api/ecus") return json([ecu]);
+      if (url === "/api/ecus/1/assessment")
+        return json({
+          assessment: { id: 7, version: 1, status: "draft" },
+          entries: [],
+          can_review: false,
+        });
+      return json([]);
+    });
+    renderAt("/login");
+    await logIn("a-editor@example.com");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "承認申請" }),
+    ).toBeTruthy();
+  });
+});

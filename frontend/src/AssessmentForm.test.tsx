@@ -199,7 +199,8 @@ describe("対策状況の入力", () => {
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "下書きを保存" }));
     const alert = await screen.findByRole("alert");
-    expect(within(alert).getByText("保存できませんでした")).toBeTruthy();
+    // 申請・承認の 409 にも同じ文言が出るので、「保存」に限らない言い方（SC3-14）
+    expect(within(alert).getByText("操作できませんでした")).toBeTruthy();
     expect(
       within(alert).getByText("承認待ちの版は編集できません"),
     ).toBeTruthy();
@@ -351,4 +352,184 @@ describe("対策状況の入力", () => {
     );
     expect(await screen.findByText("版 3：下書き")).toBeTruthy();
   });
+});
+
+describe("承認フロー（docs/test-plans/SC3-14.md #12）", () => {
+  const pending = (canReview: boolean): AssessmentView =>
+    view({
+      assessment: { id: 7, version: 2, status: "pending" },
+      can_review: canReview,
+    });
+  const renderAs = (role: string) =>
+    render(<AssessmentForm token="5" ecuId={12} role={role} />);
+  const call = (fetchMock: ReturnType<typeof stubFetch>, i: number) => ({
+    url: String(fetchMock.mock.calls[i][0]),
+    method: (fetchMock.mock.calls[i][1] as RequestInit | undefined)?.method,
+  });
+
+  it("入力者が申請すると POST /api/ecus/12/submit を呼び、状態が「承認待ち」になる", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(
+      { status: 200, body: view() },
+      { status: 200, body: pending(false) },
+    );
+    renderAs("editor");
+    await user.click(await screen.findByRole("button", { name: "承認申請" }));
+    expect(await screen.findByText("版 2：承認待ち")).toBeTruthy();
+    expect(call(fetchMock, 1)).toEqual({
+      url: "/api/ecus/12/submit",
+      method: "POST",
+    });
+  });
+
+  it("保存していない入力があるまま申請しようとしたら、申請せずに知らせる", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({ status: 200, body: view() });
+    renderAs("editor");
+    await user.type(
+      await screen.findByLabelText("セキュアブート の根拠"),
+      "追記",
+    );
+    await user.click(screen.getByRole("button", { name: "承認申請" }));
+    expect(
+      await screen.findByText(
+        "保存していない入力があります。先に下書きを保存してください",
+      ),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("申請が 409 なら、API の理由を出す", async () => {
+    const user = userEvent.setup();
+    stubFetch(
+      { status: 200, body: view() },
+      { status: 409, body: { detail: "未入力の項目があります" } },
+    );
+    renderAs("editor");
+    await user.click(await screen.findByRole("button", { name: "承認申請" }));
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("操作できませんでした")).toBeTruthy();
+    expect(within(alert).getByText("未入力の項目があります")).toBeTruthy();
+  });
+
+  it("承認者は承認できる（POST /api/ecus/12/approve）", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(
+      { status: 200, body: pending(true) },
+      {
+        status: 200,
+        body: view({ assessment: { id: 7, version: 2, status: "approved" } }),
+      },
+    );
+    renderAs("approver");
+    await user.click(await screen.findByRole("button", { name: "承認" }));
+    expect(await screen.findByText("版 2：承認済み")).toBeTruthy();
+    expect(call(fetchMock, 1)).toEqual({
+      url: "/api/ecus/12/approve",
+      method: "POST",
+    });
+  });
+
+  it("承認が 403 なら、権限がないことを出す", async () => {
+    const user = userEvent.setup();
+    stubFetch({ status: 200, body: pending(true) }, { status: 403, body: {} });
+    renderAs("approver");
+    await user.click(await screen.findByRole("button", { name: "承認" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "この操作の権限がありません",
+    );
+  });
+
+  it("差し戻しは、理由が空・空白だけなら押せず、理由を入れると送れる。理由が表示される", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(
+      { status: 200, body: pending(true) },
+      {
+        status: 200,
+        body: view({
+          assessment: {
+            id: 7,
+            version: 2,
+            status: "rejected",
+            reject_reason: "根拠が足りません",
+          },
+        }),
+      },
+    );
+    renderAs("approver");
+    const button = await screen.findByRole("button", { name: "差し戻し" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    const reason = screen.getByLabelText("差し戻しの理由");
+    await user.type(reason, "　 ");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    await user.clear(reason);
+    await user.type(reason, "根拠が足りません");
+    await user.click(button);
+    expect(await screen.findByText("版 2：差し戻し")).toBeTruthy();
+    expect(screen.getByText("差し戻しの理由：根拠が足りません")).toBeTruthy();
+    expect(call(fetchMock, 1)).toEqual({
+      url: "/api/ecus/12/reject",
+      method: "POST",
+    });
+    expect(sentBody(fetchMock, 1)).toEqual({ reason: "根拠が足りません" });
+  });
+
+  it("差し戻された版を開くと、入力者にも理由が出る", async () => {
+    stubFetch({
+      status: 200,
+      body: view({
+        assessment: {
+          id: 7,
+          version: 2,
+          status: "rejected",
+          reject_reason: "予定日を入れてください",
+        },
+      }),
+    });
+    renderAs("editor");
+    expect(
+      await screen.findByText("差し戻しの理由：予定日を入れてください"),
+    ).toBeTruthy();
+  });
+
+  it("承認者でも、API が承認できないと言う版（自分の申請など）には、ボタンの代わりに知らせを出す", async () => {
+    stubFetch({ status: 200, body: pending(false) });
+    renderAs("approver");
+    expect(
+      await screen.findByText(
+        "自分の申請は承認できません（未入力の項目がある版も承認できません）",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "承認" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "差し戻し" })).toBeNull();
+  });
+
+  it("入力者に承認・差し戻しのボタン、承認者に申請のボタンは出ない", async () => {
+    stubFetch({ status: 200, body: pending(true) });
+    const { unmount } = renderAs("editor");
+    await screen.findByText("版 2：承認待ち");
+    expect(screen.queryByRole("button", { name: "承認" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "差し戻し" })).toBeNull();
+    unmount();
+    stubFetch({ status: 200, body: view() });
+    renderAs("approver");
+    await screen.findByText("版 2：下書き");
+    expect(screen.queryByRole("button", { name: "承認申請" })).toBeNull();
+  });
+
+  it.each(["supplier_admin", "reviewer", "sys_admin"])(
+    "%s には申請・承認・差し戻しのボタンが出ない",
+    async (role) => {
+      stubFetch({ status: 200, body: pending(true) });
+      const { unmount } = renderAs(role);
+      await screen.findByText("版 2：承認待ち");
+      for (const name of ["承認申請", "承認", "差し戻し"])
+        expect(screen.queryByRole("button", { name })).toBeNull();
+      unmount();
+      stubFetch({ status: 200, body: view() });
+      renderAs(role);
+      await screen.findByText("版 2：下書き");
+      expect(screen.queryByRole("button", { name: "承認申請" })).toBeNull();
+    },
+  );
 });

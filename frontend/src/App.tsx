@@ -25,12 +25,15 @@ const sameEmail = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 export const AssessmentPage = ({
   token,
   email = "",
+  role = "",
   kept = null,
   onRestored,
   onDraftChange,
 }: {
   token: string;
   email?: string;
+  /** ログインした人の役割（承認フローのボタンの出し分け。SC3-14） */
+  role?: string;
   /** 預かっている入力。同じ人・同じ ECU のときだけ入力の部品に渡す */
   kept?: Draft | null;
   onRestored?: () => void;
@@ -53,6 +56,7 @@ export const AssessmentPage = ({
           key={`${token}:${id}`}
           token={token}
           ecuId={id}
+          role={role}
           restore={restore}
           onRestored={onRestored}
           onDraftChange={(input) =>
@@ -198,6 +202,7 @@ export const App = () => {
               <AssessmentPage
                 token={token}
                 email={email}
+                role={session.role}
                 kept={kept}
                 onRestored={() => setKept(null)}
                 onDraftChange={(draft) => {

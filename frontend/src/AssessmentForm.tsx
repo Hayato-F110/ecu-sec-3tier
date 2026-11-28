@@ -5,8 +5,11 @@ import {
   type AssessmentView,
   type EntryIn,
   type EntryStatus,
+  approveAssessment,
   getAssessment,
+  rejectAssessment,
   saveDraft,
+  submitAssessment,
   STATUS_LABELS,
   versionLabel,
 } from "./api";
@@ -117,12 +120,15 @@ const Notice = ({ view }: { view: AssessmentView }) => {
 export const AssessmentForm = ({
   token,
   ecuId,
+  role = "",
   restore,
   onRestored,
   onDraftChange,
 }: {
   token: string;
   ecuId: number;
+  /** ログインした人の役割。ボタンを出し分けるだけで、できるかどうかは API が決める（SC3-14） */
+  role?: string;
   /** 戻す入力（ログインし直す前の同じ人・同じ ECU の入力）。最初の読み込みのときだけ使う */
   restore?: KeptInput;
   /** 戻す入力を使い終えたら呼ぶ（戻した・版が変わって戻さなかった・読み込みに失敗した。
@@ -172,6 +178,14 @@ export const AssessmentForm = ({
   useEffect(() => {
     currentTarget.current = target;
   }, [target]);
+  // 承認フロー（SC3-14）：申請・承認・差し戻しの途中か、差し戻しの理由、失敗、保存していない入力の知らせ
+  const [acting, setActing] = useState(false);
+  const [reason, setReason] = useState("");
+  const [actionError, setActionError] = useState<{
+    target: string;
+    error: unknown;
+  } | null>(null);
+  const [unsavedNotice, setUnsavedNotice] = useState(false);
 
   useEffect(() => {
     let active = true; // ECU・ログインした人が変わったとき、前の応答で上書きしない
@@ -219,6 +233,7 @@ export const AssessmentForm = ({
 
   const update = (itemId: number, change: Partial<Row>) => {
     setSavedFor(null);
+    setUnsavedNotice(false);
     setChanged((current) => new Set(current).add(itemId));
     setRows((current) =>
       current.map((r) => (r.item_id === itemId ? { ...r, ...change } : r)),
@@ -250,12 +265,54 @@ export const AssessmentForm = ({
     }
   };
 
+  /** 申請・承認・差し戻しを呼び、応答の版（状態・理由）を出す。保存と同じく、途中で人・ECU が替われば捨てる */
+  const act = async (call: () => Promise<AssessmentView>) => {
+    const sentFor = target;
+    setActing(true);
+    setActionError(null);
+    setSavedFor(null);
+    try {
+      const result = await call();
+      if (currentTarget.current !== sentFor) return;
+      setView(result);
+      setRows(rowsOf(result));
+      setChanged(new Set());
+      setRestored(false);
+      setSkipped(false);
+      setReason("");
+    } catch (e: unknown) {
+      if (currentTarget.current !== sentFor) return;
+      setActionError({ target: sentFor, error: e });
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const onRequestApproval = () => {
+    // 申請するのはサーバーに保存した内容。保存していない入力があれば、申請せずに知らせる
+    if (changed.size > 0) {
+      setUnsavedNotice(true);
+      return;
+    }
+    void act(() => submitAssessment(token, ecuId));
+  };
+
+  const status = view.assessment?.status;
+  const canSubmit = role === "editor" && status === "draft";
+  const canReview = role === "approver" && view.can_review === true;
+  // 承認者で承認待ちなのに、API が承認できないと言う（自分の申請か、未入力の項目がある）
+  const cannotReview =
+    role === "approver" && status === "pending" && view.can_review !== true;
+
   return (
     <form onSubmit={onSubmit}>
       {view.assessment !== null && (
         <p>{versionLabel(view.assessment.version, view.assessment.status)}</p>
       )}
       <Notice view={view} />
+      {status === "rejected" && view.assessment?.reject_reason && (
+        <p>差し戻しの理由：{view.assessment.reject_reason}</p>
+      )}
       {restored && (
         <p>ログインし直す前の入力を戻しました（まだ保存していません）</p>
       )}
@@ -327,6 +384,55 @@ export const AssessmentForm = ({
       {savedFor === target && <p role="status">保存しました</p>}
       {saveError !== null && saveError.target === target && (
         <ErrorMessage error={saveError.error} />
+      )}
+      {canSubmit && (
+        <p>
+          <button type="button" onClick={onRequestApproval} disabled={acting}>
+            承認申請
+          </button>
+        </p>
+      )}
+      {unsavedNotice && (
+        <p role="status">
+          保存していない入力があります。先に下書きを保存してください
+        </p>
+      )}
+      {canReview && (
+        <div>
+          <button
+            type="button"
+            onClick={() => void act(() => approveAssessment(token, ecuId))}
+            disabled={acting}
+          >
+            承認
+          </button>
+          <label>
+            差し戻しの理由
+            <textarea
+              value={reason}
+              maxLength={EVIDENCE_MAX}
+              rows={2}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() =>
+              void act(() => rejectAssessment(token, ecuId, reason))
+            }
+            disabled={acting || reason.trim() === ""}
+          >
+            差し戻し
+          </button>
+        </div>
+      )}
+      {cannotReview && (
+        <p>
+          自分の申請は承認できません（未入力の項目がある版も承認できません）
+        </p>
+      )}
+      {actionError !== null && actionError.target === target && (
+        <ErrorMessage error={actionError.error} />
       )}
     </form>
   );
