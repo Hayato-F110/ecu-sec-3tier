@@ -10,13 +10,13 @@ import {
 } from "react-router";
 
 import { homeOf, type Session, setUnauthorizedHandler } from "./api";
-import { AssessmentForm, type DraftRow } from "./AssessmentForm";
+import { AssessmentForm, type KeptInput } from "./AssessmentForm";
 import { EcuList } from "./EcuList";
 import { Login } from "./Login";
 import { Matrix } from "./Matrix";
 
-/** 保存していない入力と、誰の・どの ECU の入力か（SC3-38） */
-type Draft = { email: string; ecuId: number; rows: DraftRow[] };
+/** 保存していない入力（変えた行と、そのときの版）と、誰の・どの ECU の入力か（SC3-38） */
+type Draft = KeptInput & { email: string; ecuId: number };
 
 const sameEmail = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -40,7 +40,7 @@ export const AssessmentPage = ({
   const id = /^\d{1,18}$/.test(ecuId ?? "") ? Number(ecuId) : NaN;
   const restore =
     kept !== null && kept.ecuId === id && sameEmail(kept.email, email)
-      ? kept.rows
+      ? { base: kept.base, rows: kept.rows }
       : undefined;
   return (
     <>
@@ -55,8 +55,10 @@ export const AssessmentPage = ({
           ecuId={id}
           restore={restore}
           onRestored={onRestored}
-          onDraftChange={(rows) =>
-            onDraftChange?.(rows === null ? null : { email, ecuId: id, rows })
+          onDraftChange={(input) =>
+            onDraftChange?.(
+              input === null ? null : { ...input, email, ecuId: id },
+            )
           }
         />
       ) : (
@@ -154,8 +156,7 @@ export const App = () => {
     );
 
   const { token, email } = session;
-  const sameUser =
-    returnTo !== null && returnTo.email.toLowerCase() === email.toLowerCase();
+  const sameUser = returnTo !== null && sameEmail(returnTo.email, email);
   const afterLogin = sameUser ? returnTo.path : homeOf(session.role);
 
   return (

@@ -34,8 +34,29 @@ export type DraftRow = Pick<
   "item_id" | "status" | "evidence" | "planned_date"
 >;
 
+/** 上の部品に預ける入力：自分が変えた行だけと、そのときの版（SC3-38 のレビュー1回目。
+ * 触っていない行まで戻すと、ほかの人が先に保存した値を古い値で上書きするため） */
+export type KeptInput = {
+  base: AssessmentView["assessment"];
+  rows: DraftRow[];
+};
+
+/** 預かったときと今で、同じ版か（番号・版の番号・状態がすべて同じ） */
+const sameBase = (a: KeptInput["base"], b: KeptInput["base"]) =>
+  a === null || b === null
+    ? a === b
+    : a.id === b.id && a.version === b.version && a.status === b.status;
+
+const toDraftRow = (r: Row): DraftRow => ({
+  item_id: r.item_id,
+  status: r.status,
+  evidence: r.evidence,
+  planned_date: r.planned_date,
+});
+
 /** サーバーの行に、預かった入力を重ねる。サーバーにない項目の入力は捨てる。
- * 預かった状態が（未選択）で、サーバーに保存済みの状態があるときは、サーバーの状態を使う */
+ * 預かった状態が（未選択）で、サーバーに保存済みの状態があるときは、サーバーの状態を使う
+ * （保存済みの行は（未選択）に戻せない画面の決まりのため） */
 const restoreInto = (rows: Row[], kept: DraftRow[]): Row[] =>
   rows.map((r) => {
     const k = kept.find((d) => d.item_id === r.item_id);
@@ -102,17 +123,20 @@ export const AssessmentForm = ({
   token: string;
   ecuId: number;
   /** 戻す入力（ログインし直す前の同じ人・同じ ECU の入力）。最初の読み込みのときだけ使う */
-  restore?: DraftRow[];
-  /** 戻し終えたら呼ぶ（上の部品は預かった入力を捨てる。戻すのは1回だけ） */
+  restore?: KeptInput;
+  /** 戻す入力を使い終えたら呼ぶ（戻した・版が変わって戻さなかった・読み込みに失敗した。
+   * 上の部品は預かった入力を捨てる。戻すのは1回だけ） */
   onRestored?: () => void;
   /** 保存していない入力が変わるたびに呼ぶ。入力がない・保存したら null */
-  onDraftChange?: (rows: DraftRow[] | null) => void;
+  onDraftChange?: (input: KeptInput | null) => void;
 }) => {
   const [view, setView] = useState<AssessmentView | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
-  // 保存していない入力がある（入力したか、預かった入力を戻した）
-  const [dirty, setDirty] = useState(false);
+  // 自分が変えた行の項目の番号（入力した行と、戻した行）。保存していない入力があるかもこれで決める
+  const [changed, setChanged] = useState<ReadonlySet<number>>(new Set());
   const [restored, setRestored] = useState(false);
+  // ログインし直す間に版が変わったので、預かった入力を戻さなかった
+  const [skipped, setSkipped] = useState(false);
   // 最初の読み込みのときの値だけを使う（読み込みの途中で props が変わっても読み直さない）
   const restoreAtMount = useRef(restore);
   const onRestoredRef = useRef(onRestored);
@@ -122,8 +146,15 @@ export const AssessmentForm = ({
     onDraftChangeRef.current = onDraftChange;
   }, [onRestored, onDraftChange]);
   useEffect(() => {
-    onDraftChangeRef.current?.(dirty ? rows : null);
-  }, [dirty, rows]);
+    onDraftChangeRef.current?.(
+      view === null || changed.size === 0
+        ? null
+        : {
+            base: view.assessment,
+            rows: rows.filter((r) => changed.has(r.item_id)).map(toDraftRow),
+          },
+    );
+  }, [view, changed, rows]);
   // 部品が消えたら（ほかのページへ移った・人が替わった）、預かる入力もなくす
   useEffect(() => () => onDraftChangeRef.current?.(null), []);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -143,24 +174,34 @@ export const AssessmentForm = ({
 
   useEffect(() => {
     let active = true; // ECU・ログインした人が変わったとき、前の応答で上書きしない
+    /** 戻す入力を1回だけ取り出し、上の部品に捨ててもらう。入力がなければ undefined */
+    const takeKept = () => {
+      const kept = restoreAtMount.current;
+      restoreAtMount.current = undefined;
+      if (kept === undefined || kept.rows.length === 0) return undefined;
+      onRestoredRef.current?.();
+      return kept;
+    };
     getAssessment(token, ecuId).then(
       (result) => {
         if (!active) return;
         setView(result);
-        const kept = restoreAtMount.current;
-        if (kept !== undefined && kept.length > 0) {
-          restoreAtMount.current = undefined;
-          setRows(restoreInto(rowsOf(result), kept));
-          setDirty(true);
+        const kept = takeKept();
+        if (kept !== undefined && sameBase(kept.base, result.assessment)) {
+          setRows(restoreInto(rowsOf(result), kept.rows));
+          setChanged(new Set(kept.rows.map((k) => k.item_id)));
           setRestored(true);
-          onRestoredRef.current?.();
         } else {
+          // 版が変わっていたら戻さない（古い版の入力を新しい版に書かないため）
+          if (kept !== undefined) setSkipped(true);
           setRows(rowsOf(result));
         }
         setLoadError(null);
       },
       (e: unknown) => {
         if (!active) return;
+        // 読み込みに失敗しても、預かった入力は捨てる（あとで開いたときに古い入力を戻さない）
+        takeKept();
         setView(null);
         setLoadError(e);
       },
@@ -175,7 +216,7 @@ export const AssessmentForm = ({
 
   const update = (itemId: number, change: Partial<Row>) => {
     setSavedFor(null);
-    setDirty(true);
+    setChanged((current) => new Set(current).add(itemId));
     setRows((current) =>
       current.map((r) => (r.item_id === itemId ? { ...r, ...change } : r)),
     );
@@ -194,8 +235,9 @@ export const AssessmentForm = ({
       if (currentTarget.current !== sentFor) return;
       setView(result);
       setRows(rowsOf(result));
-      setDirty(false);
+      setChanged(new Set());
       setRestored(false);
+      setSkipped(false);
       setSavedFor(sentFor);
     } catch (e: unknown) {
       if (currentTarget.current !== sentFor) return;
@@ -213,6 +255,9 @@ export const AssessmentForm = ({
       <Notice view={view} />
       {restored && (
         <p>ログインし直す前の入力を戻しました（まだ保存していません）</p>
+      )}
+      {skipped && (
+        <p>ログインし直す間に版が変わったため、前の入力は戻していません</p>
       )}
       <table>
         <thead>

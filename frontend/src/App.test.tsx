@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App, AssessmentPage } from "./App";
+import { AssessmentForm } from "./AssessmentForm";
 
 // docs/test-plans/SC3-11.md の #17、SC3-12.md の #14・#16・#17・#18
 
@@ -114,9 +115,13 @@ describe("ログインしたあと", () => {
     expect(
       await screen.findByRole("heading", { name: "自社 ECU 一覧" }),
     ).toBeTruthy();
-    const ecusCall = fetchMock.mock.calls.find(([u]) => u === "/api/ecus");
-    expect(ecusCall).toBeTruthy();
-    expect(authOf(ecusCall!)).toBe("Bearer tok-1");
+    // 見出しが出た時点では、一覧の API をまだ呼んでいないことがある（5回に1回落ちた。SC3-38 のレビュー1回目）
+    const ecusCall = await vi.waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => u === "/api/ecus");
+      expect(call).toBeTruthy();
+      return call!;
+    });
+    expect(authOf(ecusCall)).toBe("Bearer tok-1");
   });
 
   it("トークンをブラウザの保存場所・Cookie・URL・履歴に書かない（#16）", async () => {
@@ -508,6 +513,154 @@ describe("入力中にログインの期限が切れたとき（SC3-38）", () =
     expect(
       await screen.findByDisplayValue("ROM の公開鍵で署名を検証"),
     ).toBeTruthy();
+  });
+});
+
+describe("預かった入力の戻し方（SC3-38 のレビュー1回目）", () => {
+  const ECU = {
+    id: 1,
+    name: "ゲートウェイ ECU",
+    part_no: "DMY-A001",
+    vehicle_model: "架空セダン",
+    latest_version: 1,
+    latest_status: "draft",
+  };
+  const entry = (item_id: number, title: string, evidence: string) => ({
+    item_id,
+    code: `C${item_id}`,
+    title,
+    status: "done",
+    evidence,
+    planned_date: null,
+  });
+  const BEFORE = {
+    assessment: { id: 7, version: 1, status: "draft" },
+    entries: [entry(1, "セキュアブート", "根拠1"), entry(2, "鍵管理", "根拠2")],
+  };
+  /** 1回目の保存は 401。そのあとの読み込みは after を返す（ログインし直す間に、ほかの人が変えた）。
+   * "fail-once" なら、そのあとの最初の読み込みだけ 500 で、次からは BEFORE */
+  const changingApi = (after: unknown) => {
+    let expired = false;
+    let failed = false;
+    return stubApi((url) => {
+      if (url === "/api/ecus") return json([ECU]);
+      if (url === "/api/ecus/1/assessment") {
+        if (!expired) return json(BEFORE);
+        if (after === "fail-once") {
+          if (failed) return json(BEFORE);
+          failed = true;
+          return json({ detail: "一時的なエラー" }, 500);
+        }
+        return json(after);
+      }
+      if (url === "/api/ecus/1/draft") {
+        if (!expired) {
+          expired = true;
+          return json({ detail: "ログインが必要です" }, 401);
+        }
+        return json(BEFORE);
+      }
+      return json([]);
+    });
+  };
+  const typeThenExpire = async () => {
+    renderAt("/login");
+    await logIn("a-editor@example.com");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    fireEvent.change(await screen.findByLabelText("セキュアブート の根拠"), {
+      target: { value: "保存前の根拠" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "下書きを保存" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "ログインしてください",
+    );
+  };
+
+  it("戻すのは自分が変えた行だけ。触っていない行は、ほかの人が保存した値のまま送る", async () => {
+    const fetchMock = changingApi({
+      ...BEFORE,
+      entries: [
+        entry(1, "セキュアブート", "根拠1"),
+        entry(2, "鍵管理", "ほかの人が保存した根拠2"),
+      ],
+    });
+    await typeThenExpire();
+    await logIn("a-editor@example.com");
+    expect(await screen.findByDisplayValue("保存前の根拠")).toBeTruthy();
+    expect(screen.getByDisplayValue("ほかの人が保存した根拠2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下書きを保存" }));
+    expect(await screen.findByText("保存しました")).toBeTruthy();
+    const last = fetchMock.mock.calls
+      .filter(([u]) => u === "/api/ecus/1/draft")
+      .at(-1)!;
+    expect(String(last[1]?.body)).toContain("ほかの人が保存した根拠2");
+    expect(String(last[1]?.body)).not.toContain('"根拠2"');
+  });
+
+  it.each([
+    ["版の番号が変わった", { id: 8, version: 2, status: "draft" }],
+    [
+      "版の状態が変わった（申請された）",
+      { id: 7, version: 1, status: "pending" },
+    ],
+  ])(
+    "ログインし直す間に%sら、入力を戻さずに知らせる",
+    async (_name, assessment) => {
+      changingApi({
+        assessment,
+        entries: [entry(1, "セキュアブート", "今の根拠1"), BEFORE.entries[1]],
+      });
+      await typeThenExpire();
+      await logIn("a-editor@example.com");
+      expect(await screen.findByDisplayValue("今の根拠1")).toBeTruthy();
+      expect(screen.queryByDisplayValue("保存前の根拠")).toBeNull();
+      expect(
+        screen.getByText(
+          "ログインし直す間に版が変わったため、前の入力は戻していません",
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it("ログインし直したあとの読み込みに失敗したら、預かった入力を捨てる（あとで開いても戻さない）", async () => {
+    changingApi("fail-once");
+    await typeThenExpire();
+    await logIn("a-editor@example.com");
+    // ログイン画面の「ログインしてください」の知らせと取り違えないよう、エラーの文で探す
+    // （画面はサーバーの詳しい文を出さず、状態の番号だけを出す）
+    expect(
+      await screen.findByText("API の呼び出しに失敗しました（500）"),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "← 自社 ECU 一覧へ" }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: "ゲートウェイ ECU" }),
+    );
+    expect(await screen.findByDisplayValue("根拠1")).toBeTruthy();
+    expect(screen.queryByDisplayValue("保存前の根拠")).toBeNull();
+  });
+
+  it("上の部品に預ける入力は、自分が変えた行の4つの欄と、そのときの版だけ", async () => {
+    stubApi(() => json(BEFORE));
+    const onDraftChange = vi.fn();
+    render(
+      <AssessmentForm token="tok" ecuId={1} onDraftChange={onDraftChange} />,
+    );
+    fireEvent.change(await screen.findByLabelText("鍵管理 の根拠"), {
+      target: { value: "変えた根拠2" },
+    });
+    expect(onDraftChange).toHaveBeenLastCalledWith({
+      base: { id: 7, version: 1, status: "draft" },
+      rows: [
+        {
+          item_id: 2,
+          status: "done",
+          evidence: "変えた根拠2",
+          planned_date: "",
+        },
+      ],
+    });
   });
 });
 
