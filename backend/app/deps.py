@@ -2,6 +2,8 @@
 
 調べる順番（docs/test-plans/SC3-9.md・SC3-13.md）：ログイン（401）→ 会社の種類と役割が合うか（403）
 → 自社の ECU か（404）→ 操作の役割（403）。
+メーカー用で URL に ECU の番号がある API（確認。SC3-15）は：ログイン（401）→ メーカーの会社か（403）
+→ ECU があるか（404。メーカーには全社の ECU が見える）→ 確認者か（403）。
 FastAPI は依存（Depends）を、本文の形の検査（422）より先に解くので、
 本文の形が誤っていても、他社の ECU には 404 が先に返る。
 ただし JSON として読めない本文は、依存より前に 422 になる
@@ -89,7 +91,9 @@ def oem_user(user: Annotated[User, Depends(current_user)], db: Db) -> User:
 
     役割に加えて会社の種類も確かめる（役割と会社の種類が合うことは DB の制約で守っていない。
     サプライヤの会社に「確認者」ができても、全社のデータを読ませない）。
-    URL に番号のない API なので、隠す相手がなく、404 ではなく 403（docs/test-plans/SC3-11.md）。
+    メーカー以外は、ECU を探す前に 403（docs/test-plans/SC3-11.md）。URL に ECU の番号がある
+    メーカー用の API（確認）でも同じで、他社の ECU でも存在しない番号でも同じ 403 になり、
+    存在は漏れない。
     """
     company = db.get(Company, user.company_id)
     if user.role not in OEM_ROLES or company is None or company.type != "oem":

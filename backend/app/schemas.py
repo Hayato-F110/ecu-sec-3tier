@@ -96,12 +96,18 @@ class RejectIn(BaseModel):
     reason: ReasonText
 
 
+# 確認者が画面で見ていた版の番号。記録する版は API が決める（最新の承認済みの版）。
+# 番号が違えば、見ていない版に記録しないよう 409（見ている間に新しい版が承認されたとき）
+SeenVersion = Annotated[int, Field(strict=True, ge=1)]
+
+
 class ConfirmIn(BaseModel):
     """メーカーの確認完了。理由の欄はない"""
 
     model_config = ConfigDict(extra="forbid")
 
     result: Literal["confirmed"]
+    version: SeenVersion
 
 
 class ChangeRequestIn(BaseModel):
@@ -110,6 +116,7 @@ class ChangeRequestIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     result: Literal["change_requested"]
+    version: SeenVersion
     reason: ReasonText
 
 

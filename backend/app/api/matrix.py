@@ -13,9 +13,18 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy import and_, func, select
 
-from app.api.ecus import commit_with_log
+from app.api.ecus import client_ip, commit_with_log
 from app.deps import Db, OemUser, reviewer_of_ecu
-from app.models import Assessment, AssessmentEntry, Comment, Company, Ecu, MeasureItem, User
+from app.models import (
+    Assessment,
+    AssessmentEntry,
+    AuditLog,
+    Comment,
+    Company,
+    Ecu,
+    MeasureItem,
+    User,
+)
 from app.schemas import (
     ChangeRequestIn,
     ConfirmIn,
@@ -114,6 +123,10 @@ def review(body: ReviewIn, target: Reviewer, db: Db, request: Request) -> Review
     ).one_or_none()
     if current is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="承認済みの版がありません")
+    if current.version != body.version:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="新しい版が承認されました。見直してください"
+        )
     if current.review_status != "unreviewed":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="この版はすでに確認済みです")
 
@@ -121,12 +134,23 @@ def review(body: ReviewIn, target: Reviewer, db: Db, request: Request) -> Review
     current.reviewed_by = user.id
     current.reviewed_at = datetime.now(UTC)
     if isinstance(body, ChangeRequestIn):
+        # コメントの日時は確認の日時にそろえる（同じ1回の操作なので、並べたとき前後しない）
+        comment = Comment(
+            assessment_id=current.id,
+            author_id=user.id,
+            kind="change_request",
+            body=body.reason,
+            created_at=current.reviewed_at,
+        )
+        db.add(comment)
+        db.flush()
+        # コメントも監査ログでたどれるように、コメントの番号の行を足す（本文は入れない。決まり5）
         db.add(
-            Comment(
-                assessment_id=current.id,
-                author_id=user.id,
-                kind="change_request",
-                body=body.reason,
+            AuditLog(
+                user_id=user.id,
+                action="add_comment",
+                target=f"comment:{comment.id}",
+                ip=client_ip(request),
             )
         )
         action = "request_change"

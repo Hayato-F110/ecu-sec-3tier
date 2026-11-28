@@ -108,7 +108,8 @@ def ecu_unreviewed(s: Session) -> Params:
 
 
 def change_request_body(_s: Session) -> dict:
-    return {"result": "change_requested", "reason": "権限のテスト"}
+    # DMY-A001 の承認済みの版は v1 だけ
+    return {"result": "change_requested", "reason": "権限のテスト", "version": 1}
 
 
 def draft_body(s: Session) -> dict:
