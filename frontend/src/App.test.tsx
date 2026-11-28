@@ -546,10 +546,12 @@ describe("預かった入力の戻し方（SC3-38 のレビュー1回目）", ()
       if (url === "/api/ecus") return json([ECU]);
       if (url === "/api/ecus/1/assessment") {
         if (!expired) return json(BEFORE);
-        if (after === "fail-once") {
+        if (after === "fail-once" || after === "401-once") {
           if (failed) return json(BEFORE);
           failed = true;
-          return json({ detail: "一時的なエラー" }, 500);
+          return after === "401-once"
+            ? json({ detail: "ログインが必要です" }, 401)
+            : json({ detail: "一時的なエラー" }, 500);
         }
         return json(after);
       }
@@ -639,6 +641,33 @@ describe("預かった入力の戻し方（SC3-38 のレビュー1回目）", ()
     );
     expect(await screen.findByDisplayValue("根拠1")).toBeTruthy();
     expect(screen.queryByDisplayValue("保存前の根拠")).toBeNull();
+  });
+
+  it("ログインし直した直後の読み込みがまた 401 でも、預かった入力を失わない（レビュー2回目）", async () => {
+    changingApi("401-once");
+    await typeThenExpire();
+    await logIn("a-editor@example.com");
+    // 読み込みが 401 になり、もう一度ログイン画面へ
+    expect(
+      await screen.findByRole("heading", { name: "ログイン" }),
+    ).toBeTruthy();
+    await logIn("a-editor@example.com");
+    expect(await screen.findByDisplayValue("保存前の根拠")).toBeTruthy();
+  });
+
+  it("預かった行が0件でも、使い終えたことを上の部品に知らせる（レビュー2回目）", async () => {
+    stubApi(() => json(BEFORE));
+    const onRestored = vi.fn();
+    render(
+      <AssessmentForm
+        token="tok"
+        ecuId={1}
+        restore={{ base: BEFORE.assessment as never, rows: [] }}
+        onRestored={onRestored}
+      />,
+    );
+    expect(await screen.findByDisplayValue("根拠1")).toBeTruthy();
+    expect(onRestored).toHaveBeenCalledTimes(1);
   });
 
   it("上の部品に預ける入力は、自分が変えた行の4つの欄と、そのときの版だけ", async () => {

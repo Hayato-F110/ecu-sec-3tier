@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
+  ApiError,
   type AssessmentView,
   type EntryIn,
   type EntryStatus,
@@ -178,9 +179,10 @@ export const AssessmentForm = ({
     const takeKept = () => {
       const kept = restoreAtMount.current;
       restoreAtMount.current = undefined;
-      if (kept === undefined || kept.rows.length === 0) return undefined;
+      if (kept === undefined) return undefined;
+      // 行が0件でも、使い終えたことは知らせる（上の部品に残らないように。レビュー2回目）
       onRestoredRef.current?.();
-      return kept;
+      return kept.rows.length === 0 ? undefined : kept;
     };
     getAssessment(token, ecuId).then(
       (result) => {
@@ -200,8 +202,9 @@ export const AssessmentForm = ({
       },
       (e: unknown) => {
         if (!active) return;
-        // 読み込みに失敗しても、預かった入力は捨てる（あとで開いたときに古い入力を戻さない）
-        takeKept();
+        // 読み込みに失敗しても、預かった入力は捨てる（あとで開いたときに古い入力を戻さない）。
+        // ただし 401 は読み込みの失敗ではなくログインの終わりなので、捨てない（レビュー2回目）
+        if (!(e instanceof ApiError && e.status === 401)) takeKept();
         setView(null);
         setLoadError(e);
       },

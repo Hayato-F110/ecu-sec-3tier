@@ -105,9 +105,15 @@ export const App = () => {
           ? null
           : { email: now.email, path: here.current },
       );
+      // 入力の画面が開いていなければ（liveDraft が null）、まだ戻していない同じ人の入力を残す
+      // （ログインし直した直後にまた 401 になっても失わない。SC3-38 のレビュー2回目）
       const draft = liveDraft.current;
-      setKept(
-        draft !== null && sameEmail(draft.email, now.email) ? draft : null,
+      setKept((k) =>
+        draft !== null && sameEmail(draft.email, now.email)
+          ? draft
+          : k !== null && sameEmail(k.email, now.email)
+            ? k
+            : null,
       );
       current.current = null;
       setSession(null);
