@@ -132,11 +132,14 @@ def review(body: ReviewIn, target: Reviewer, db: Db, request: Request) -> Review
     if current.review_status != "unreviewed":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="この版はすでに確認済みです")
 
+    # DB の時計（トランザクションの開始の時刻）。ほかのコメント・監査ログの日時（server_default
+    # の now()）と同じ時計にし、アプリと DB の時計のずれで並びが前後しないようにする。
+    # 欄を書き換える前に読む（この問い合わせの前に、書きかけの行が自動で DB に送られ、
+    # 「確認者があれば日時も必須」の制約に当たるため）
+    now = db.scalar(select(func.now()))
     current.review_status = body.result
     current.reviewed_by = user.id
-    # DB の時計（トランザクションの開始の時刻）。ほかのコメント・監査ログの日時（server_default
-    # の now()）と同じ時計にし、アプリと DB の時計のずれで並びが前後しないようにする
-    current.reviewed_at = db.scalar(select(func.now()))
+    current.reviewed_at = now
     if isinstance(body, ChangeRequestIn):
         # コメントの日時は確認の日時にそろえる（同じ1回の操作なので、並べたとき前後しない）
         comment = Comment(
