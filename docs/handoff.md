@@ -1,29 +1,31 @@
 # 引き継ぎ
 
-最終更新：2026-11-28 17:05（作業中）
+最終更新：2026-11-28 18:40（作業中）
 
 ## いまの状態
 
-- スプリント3（11/26〜11/30）。Jira の期限では SC3-14（Day 8）が 11/29、SC3-15（Day 9）が 11/30。設計案はすべてオーナーが承認済み（11/26）
-- 11/28 にマージ：PR #38（スクラムガイド 2020 の写し `docs/reference/scrum-guide/`）、#39（SC3-49：文が0件なら `/code-review` を通す。完了にした）。main で Hook のテスト 105件通過
-- SC3-50（知らせなしの `/code-review` を本当に止める仕組み）：オーナーがスプリント4に入れた
-- SC3-14：API はマージ済み。**画面の PR（テストの一覧の #12）がまだ**。SC3-25 は SC3-14 と一緒に完了にする
-- SC3-38：ブランチ `feature/SC3-38-keep-draft-on-relogin`（作業場所 `.claude/worktrees/sc3-38`）。11/28 に main を取り込んだ。PR の説明の下書きは `tmp/pr-38.md`（元の作業場所）。**`/code-review` がまだ**
+- スプリント3（11/26〜11/30）。残りは SC3-15（Day 9。期限 11/30）・SC3-25・SC3-30。ほかの課題は完了
+- 11/28 にマージ：[PR #38](https://github.com/Hayato-F110/ecu-sec-3tier/pull/38)（スクラムガイドの写し）、[#39](https://github.com/Hayato-F110/ecu-sec-3tier/pull/39)（SC3-49）、[#42](https://github.com/Hayato-F110/ecu-sec-3tier/pull/42)（SC3-38）、[#43](https://github.com/Hayato-F110/ecu-sec-3tier/pull/43)（SC3-52）、[#44](https://github.com/Hayato-F110/ecu-sec-3tier/pull/44)（SC3-14 の画面）。main で画面のテスト 101件・lint・build 通過
+- SC3-14：完了（証拠の表は Jira のコメント）
+- SC3-25：証拠の表は Jira のコメントに書いた（`backend/tests/test_api_workflow.py:274`）。表の「PR の検査で pytest が通過」は PR #36 の説明で確かめられなかったので、main で pytest を流し直している（`tmp/main-after-44-pytest.txt`）。通ったら表を直して完了にする
+- SC3-50・SC3-51：オーナーがスプリント4に入れた。SC3-53（バグ）・SC3-54：バックログ。おすすめはスプリント4（オーナーが決める）
+- GitHub の Autolink references（`SC3-` → Jira）を 11/28 09:05 ごろに設定した（オーナーが決めた）。設定は残っているが、PR #44 の画面で `SC3-14` がリンクにならない。設定の前の表示が残っているせいでも、前後の文字のせいでもないことは確かめた（説明を書き直しても、`SC3-14` だけの行でもならない）。リポジトリのファイルの中は、GitHub の決まりで自動リンクにならない
+- PR の説明の `#12`（テストの一覧の番号）が、PR #12 へのリンクになってしまう。テストの番号は「項目12」のように書く
 
 ## 次にやること
 
-1. SC3-38：`/code-review`（守りに関わるので2回まで）→ PR（`tmp/pr-38.md`）
-2. SC3-14 の画面の PR（#12）
-3. SC3-30、SC3-15（Day 9）
-4. 不安定なテスト：`App.test.tsx` の「一覧に移り、以後の API に Authorization: Bearer が付く（#15）」が、SC3-38 のブランチで5回に1回落ちた（main では8回とも通った）。見出しが出た時点で、一覧の API をまだ呼んでいないことがある。待ち方を `vi.waitFor` にする案
+1. SC3-25 を完了にする（pytest の結果を見てから）
+2. **11/29 に [PR #44](https://github.com/Hayato-F110/ecu-sec-3tier/pull/44) を開き、説明の一番下の `SC3-14` がリンクになったかを見る**。それでもならなければ、調べるタスク（原因の候補：反映の遅れ、GitHub 側の不具合か文書にない決まり）を作ることをオーナーに提案する（おすすめはスプリント4）
+3. SC3-15（Day 9）。そのあと SC3-30（どちらを先にするかはオーナーに聞いた。おすすめは SC3-15 を先）
+4. 11/30：スプリントの最終日。`/design-decisions`・`/retro`
 
 ## オーナーにお願いすること
 
-- なし（11/27 に記憶から書いたスクラムガイドの節は、11/28 に原文と合っていることを確かめた）
+- 決めてほしいこと（おすすめつきで伝え済み）：① devlog・引き継ぎ・設計の文書でも PR を URL のリンクで書くか（おすすめ：書く）② 前の devlog は直さない（おすすめ）③ リポジトリのファイルの Jira キーは文字のまま（おすすめ）④ SC3-15 と SC3-30 の順番
 
 ## つまずき防止のメモ
 
-- **画面のテスト（Vitest）は、作業フォルダのドライブ名が小文字の `c:` だと全部落ちる**（「Vitest failed to find the current suite」）。Bash では `cd /c/...` してから流す。11/27 も、作業場所が `c:\` に変わった直後に起きた
+- **画面のテスト（Vitest）は、作業フォルダのドライブ名が小文字の `c:` だと全部落ちる**（「Vitest failed to find the current suite」）。Bash では `cd /c/...` してから流す。11/27 も、作業場所が `c:\` に変わった直後に起きた。11/28 には、`C:` でもバックグラウンドで流したときに1回だけ同じエラーが出た（前で流し直すと通った。原因は分からない）
 - `python` は `backend/.venv` を指す。python-pptx などはシステムの Python 3.14 に入っている
 - worktree には `.env` がないので、API のテストは元の作業場所で `git checkout --detach <ブランチ>` して流す
 - GitHub はマージのときにリモートのブランチを消す。`git push origin --delete` の「remote ref does not exist」は失敗ではない
